@@ -8,8 +8,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 换成 v4 版本，消除警告
       - name: 拉取代码
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         
       - name: 安装 Python
         uses: actions/setup-python@v4
@@ -24,8 +25,9 @@ jobs:
           python get_cpi.py
           python plot_cpi.py
           
+      # 换成 v5 版本，并添加 token 解决权限报错
       - name: 提交更新到仓库
-        uses: stefanzweifel/git-auto-commit-action@v4
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🤖 每日自动化更新经济数据图表"
-          
+          token: ${{ secrets.GITHUB_TOKEN }}
