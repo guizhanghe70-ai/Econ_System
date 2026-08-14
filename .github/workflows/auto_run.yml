@@ -1,0 +1,30 @@
+name: 每日经济数据更新
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v3
+        
+      - name: 安装 Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: 安装依赖包
+        run: pip install akshare pandas matplotlib
+        
+      - name: 运行脚本
+        run: |
+          python get_cpi.py
+          python plot_cpi.py
+          
+      - name: 提交更新到仓库
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "🤖 每日自动化更新经济数据图表"
