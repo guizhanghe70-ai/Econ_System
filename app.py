@@ -5,12 +5,11 @@ import plotly.express as px
 import numpy as np
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import base64
-from io import BytesIO
 
 st.set_page_config(page_title="经济运行分析系统", layout="wide")
 st.title("📊 中国宏观双指标看板 (完全体)")
 
-# ==================== 数据加载 (加入了 M2) ====================
+# ==================== 数据加载 ====================
 try:
     cpi_df = pd.read_csv('cpi_data.csv')
     cpi_df['月份'] = cpi_df['月份'].astype(str).str.replace('年', '-').str.replace('月份', '')
@@ -69,6 +68,7 @@ else:
 data['3个月移动均线'] = data[col_name].rolling(window=3).mean()
 data['6个月移动均线'] = data[col_name].rolling(window=6).mean()
 
+# 判断状态
 def get_status(val, high, low):
     if val > high: return "⚠️ 存在通胀压力"
     elif val < low: return "⚠️ 存在通缩风险"
@@ -76,28 +76,33 @@ def get_status(val, high, low):
 
 fig_ma = go.Figure()
 fig_ma.add_trace(go.Scatter(x=data['月份'], y=data[col_name], mode='lines+markers', name='实际数据',
-    text=[get_status(v, cpi_warning_high, cpi_warning_low) for v in data[col_name]], hovertemplate="月份: %{x|%Y年%m月}<br>数值: %{y:.2f}<br><b>📌 状态: %{text}</b><extra></extra>"))
+    text=[get_status(v, cpi_warning_high, cpi_warning_low) for v in data[col_name]], 
+    hovertemplate="月份: %{x|%Y年%m月}<br>数值: %{y:.2f}<br><b>📌 状态: %{text}</b><extra></extra>"))
 fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['3个月移动均线'], mode='lines', name='3个月移动均线'))
 fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['6个月移动均线'], mode='lines', name='6个月移动均线'))
 
-# 预测逻辑保留 (略作简化)
+# 预测逻辑
 last_date = data['月份'].iloc[-1]
 forecast_df = pd.DataFrame()
 forecast_text = "⚠️ 数据不足以预测。"
-if len(data) >= 6:
+if len(data) >= 6: # 已改为6个月即可触发
     try:
         model = ExponentialSmoothing(data[col_name], trend='add', seasonal=None).fit()
         forecast_values = model.forecast(3)
         forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=3, freq='MS')
         forecast_df = pd.DataFrame({'月份': forecast_dates, '预测值': forecast_values})
-        forecast_text = f"💡 **模型预测**：预计下个月数值约为 **{forecast_values[0]:.2f}**。"
+        forecast_text = f"💡 **趋势预估**：预计下个月数值约为 **{forecast_values[0]:.2f}**。"
     except:
         pass
 
+# 🟢【核心修复】：给预测线加上正确的状态参数
 if not forecast_df.empty:
+    # 使用 lambda 完美把侧边栏的阈值传进去
+    forecast_df['预测状态'] = forecast_df['预测值'].apply(lambda x: get_status(x, cpi_warning_high, cpi_warning_low))
     fig_ma.add_trace(go.Scatter(x=forecast_df['月份'], y=forecast_df['预测值'], mode='lines+markers', name='未来3个月预测趋势',
-        line=dict(dash='dash', color='red'), marker=dict(color='red'),
-        hovertemplate="预测月份: %{x|%Y年%m月}<br>预测数值: %{y:.2f}<extra>预测</extra>"))
+        line=dict(dash='dash', color='red'), marker=dict(color='red'), 
+        text=forecast_df['预测状态'],
+        hovertemplate="预测月份: %{x|%Y年%m月}<br>预测数值: %{y:.2f}<br><b>📌 预测情况: %{text}</b><extra>预测</extra>"))
 
 fig_ma.update_xaxes(tickformat="%Y年%m月", dtick="M12")
 fig_ma.update_layout(margin=dict(b=80))
@@ -125,7 +130,6 @@ fig_pmi.add_trace(go.Scatter(
     x=pmi_data['月份'], y=pmi_data[selected_pmi],
     mode='lines+markers', name=selected_pmi,
     hovertemplate="月份: %{x|%Y年%m月}<br>PMI数值: %{y:.2f}<extra></extra>"))
-# 使用自定义荣枯线
 fig_pmi.add_hline(y=pmi_line, line_dash="dash", line_color="red", annotation_text=f"自定义荣枯线 {pmi_line}")
 fig_pmi.update_xaxes(tickformat="%Y年%m月", dtick="M12")
 st.plotly_chart(fig_pmi, use_container_width=True)
