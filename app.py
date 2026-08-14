@@ -5,7 +5,7 @@ import numpy as np
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 st.set_page_config(page_title="经济运行分析系统", layout="wide")
-st.title("📊 中国宏观经济 CPI & PPI 双指标看板")
+st.title("📊 中国宏观经济 CPI（居民消费价格指数）& PPI（工业生产者出厂价格指数）双指标看板")
 
 try:
     cpi_df = pd.read_csv('cpi_data.csv')
@@ -29,12 +29,15 @@ st.subheader("📈 单指标趋势及移动均线分析")
 metric_options = [col for col in cpi_df.columns if col != '月份']
 selected_metric = st.sidebar.selectbox("📌 选择你想查看的指标：", metric_options, index=0)
 
+# 核心改动：判断当前选中的是 CPI 还是 PPI，并赋予明确中文名称
 if '当月' in selected_metric or '同比' in selected_metric or '环比' in selected_metric:
     data = ppi_df[['月份', '当月']].copy()
     col_name = '当月'
+    data_type = "PPI（工业生产者出厂价格指数）"
 else:
     data = cpi_df[['月份', selected_metric]].copy()
     col_name = selected_metric
+    data_type = "CPI（居民消费价格指数）"
 
 data['3个月移动均线'] = data[col_name].rolling(window=3).mean()
 data['6个月移动均线'] = data[col_name].rolling(window=6).mean()
@@ -51,10 +54,8 @@ last_date = data['月份'].iloc[-1]
 
 if col_name == '当月':
     ref_range = "（参考平稳区间：97.0 ~ 103.0）"
-    data_name = "PPI (当月)"
 else:
     ref_range = "（参考平稳区间：99.0 ~ 103.0）"
-    data_name = col_name
 
 if len(data) >= 24:
     try:
@@ -63,7 +64,7 @@ if len(data) >= 24:
         forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=3, freq='MS')
         forecast_df = pd.DataFrame({'月份': forecast_dates, '预测值': forecast_values})
         forecast_df['预测状态'] = forecast_df['预测值'].apply(get_status)
-        forecast_text = f"💡 **{data_name} 模型预测**：基于过去数据趋势推算，预计下个月数值约为 **{forecast_values[0]:.2f}** {ref_range}。"
+        forecast_text = f"💡 **{data_type} 模型预测**：基于过去数据趋势推算，预计下个月数值约为 **{forecast_values[0]:.2f}** {ref_range}。"
     except:
         forecast_text = "⚠️ 因数据波动较大，自动降级为基础趋势预测。"
         forecast_df = pd.DataFrame()
@@ -82,20 +83,21 @@ if forecast_df.empty and len(data) >= 12:
         forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=3, freq='MS')
         forecast_df = pd.DataFrame({'月份': forecast_dates, '预测值': [val_next, val_next+0.1, val_next+0.2]})
         forecast_df['预测状态'] = forecast_df['预测值'].apply(get_status)
-        forecast_text = f"💡 **{data_name} 趋势预估**：基于最近趋势，预计下个月数值约为 **{val_next:.2f}** {ref_range}。"
+        forecast_text = f"💡 **{data_type} 趋势预估**：基于最近趋势，预计下个月数值约为 **{val_next:.2f}** {ref_range}。"
     except:
         forecast_text = "⚠️ 预测数据不足，无法准确计算。"
 # ================= 预测功能结束 =================
 
 fig_ma = go.Figure()
+# 隐藏图例名称的括号
 fig_ma.add_trace(go.Scatter(
     x=data['月份'], y=data[col_name],
     mode='lines+markers', name='实际数据',
     text=[get_status(v) for v in data[col_name]],
     hovertemplate="月份: %{x|%Y年%m月}<br>数值: %{y:.2f}<br><b>📌 状态: %{text}</b><extra></extra>"
 ))
-fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['3个月移动均线'], mode='lines', name='3个月移动均线 (短期)'))
-fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['6个月移动均线'], mode='lines', name='6个月移动均线 (长期)'))
+fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['3个月移动均线'], mode='lines', name='3个月移动均线 (平滑短期)'))
+fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['6个月移动均线'], mode='lines', name='6个月移动均线 (平滑长期)'))
 
 # 预测线
 if not forecast_df.empty:
@@ -110,15 +112,14 @@ if not forecast_df.empty:
 
 fig_ma.update_xaxes(tickformat="%Y年%m月", dtick="M12")
 
-# 🌟【核心修改】在图表内部底部添加图例和参考值的说明框
+# 图例说明（直接动态显示当前指标的中文全称）
 fig_ma.add_annotation(
     xref="paper", yref="paper",
-    x=0.5, y=-0.15,  # 文字位于图表正下方
-    text=f"🔵 实际数据 | 🔷 3个月均线 (平滑短期波动) | 🔴 6个月均线 (平滑长期波动) | 预测区间: {ref_range}",
+    x=0.5, y=-0.15,
+    text=f"🔵 {data_type} 实际数据 | 🔷 3个月均线 (平滑短期波动) | 🔴 6个月均线 (平滑长期波动) | 预测区间 {ref_range}",
     showarrow=False,
     font=dict(size=12, color="#333333")
 )
-# 调整图表底部留白，防止文字被切断
 fig_ma.update_layout(margin=dict(b=80))
 
 st.plotly_chart(fig_ma, use_container_width=True)
@@ -128,7 +129,8 @@ if forecast_text:
 
 
 # ==================== 图表 2：CPI & PPI 双轴对比 ====================
-st.subheader("🔁 CPI（消费端） vs PPI（生产端） 对比分析")
+# 💡 这里的标题也加上了完整中文注释
+st.subheader("🔁 CPI（居民消费价格指数） vs PPI（工业生产者出厂价格指数） 对比分析")
 def get_ppi_status(val):
     if val > 103: return "工厂生产成本偏高"
     elif val < 97: return "工业生产需求偏冷"
@@ -148,7 +150,7 @@ fig_dual.add_trace(go.Scatter(
     hovertemplate="月份: %{x|%Y年%m月}<br>数值: %{y:.2f}<br><b>📌 PPI状态: %{text}</b><extra>PPI</extra>"
 ))
 fig_dual.update_layout(
-    title="CPI (左轴) 与 PPI (右轴) 历史走势对比",
+    title="CPI（居民消费价格指数）(左轴) 与 PPI（工业生产者出厂价格指数）(右轴) 历史走势对比",
     xaxis=dict(tickformat="%Y年%m月", dtick="M12"),
     yaxis=dict(title="CPI 数值 (左轴)"),
     yaxis2=dict(title="PPI 数值 (右轴)", overlaying='y', side='right'),
@@ -161,8 +163,8 @@ with st.expander("🤖 点击查看AI动态解读（基于最新数据）"):
     latest_cpi = cpi_df.iloc[-1]
     latest_ppi = ppi_df.iloc[-1]
     st.write(f"🔹 **最新月份 ({latest_cpi['月份'].strftime('%Y年%m月')}) 宏观数据快照：**")
-    st.write(f"- 全国 CPI 当月值：**{latest_cpi['全国-当月']}** （参考平稳区间：99.0 ~ 103.0）")
-    st.write(f"- PPI 当月值：**{latest_ppi['当月']}** （参考平稳区间：97.0 ~ 103.0）")
+    st.write(f"- 全国 CPI（居民消费价格指数）当月值：**{latest_cpi['全国-当月']}** （参考平稳区间：99.0 ~ 103.0）")
+    st.write(f"- PPI（工业生产者出厂价格指数）当月值：**{latest_ppi['当月']}** （参考平稳区间：97.0 ~ 103.0）")
     
     cpi_val = latest_cpi['全国-当月']
     if cpi_val > 103:
@@ -176,8 +178,8 @@ with st.expander("🤖 点击查看AI动态解读（基于最新数据）"):
 with st.expander("📋 点击展开查看原始数据表格"):
     col1, col2 = st.columns(2)
     with col1:
-        st.write("CPI 数据")
+        st.write("CPI（居民消费价格指数） 数据")
         st.dataframe(cpi_df)
     with col2:
-        st.write("PPI 数据")
+        st.write("PPI（工业生产者出厂价格指数） 数据")
         st.dataframe(ppi_df)
