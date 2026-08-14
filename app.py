@@ -7,14 +7,18 @@ st.title("📊 中国宏观经济 CPI 数据看板")
 
 try:
     df = pd.read_csv('cpi_data.csv')
-    # 处理日期
+    # 处理中文日期格式
     df['月份'] = df['月份'].astype(str).str.replace('年', '-').str.replace('月份', '')
     df['月份'] = pd.to_datetime(df['月份'])
+    
+    # 🟢【关键修复】：强制按时间升序排列，确保最新数据在最后一行
+    df = df.sort_values('月份', ascending=True)
+
 except FileNotFoundError:
     st.error("❌ 找不到数据文件！请先运行 python get_cpi.py 生成数据。")
     st.stop()
 
-# 剔除月份列，获取可选指标
+# 剔除“月份”列，剩下的都是可以选择的指标
 metric_options = [col for col in df.columns if col != '月份']
 
 st.sidebar.header("🔧 数据控制面板")
@@ -55,8 +59,9 @@ if compare_metrics:
     st.plotly_chart(fig_compare, use_container_width=True)
 
 
-# ==================== 智能文字解读（教你如何看数据） ====================
+# ==================== 智能文字解读 ====================
 with st.expander("🤖 点击查看AI动态解读（基于最新数据）"):
+    # 因为我们已经排过序，最新的数据现在肯定在最后一行
     latest_data = df.iloc[-1]
     st.write(f"🔹 **最新月份 ({latest_data['月份'].strftime('%Y年%m月')}) 数据解读：**")
     if '全国-当月' in df.columns:
