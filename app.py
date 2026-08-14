@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import numpy as np
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 st.set_page_config(page_title="经济运行分析系统", layout="wide")
-st.title("📊 中国宏观双指标看板（含趋势预测）")
+st.title("📊 中国宏观经济 CPI & PPI 双指标看板")
 
 try:
     cpi_df = pd.read_csv('cpi_data.csv')
@@ -43,25 +44,45 @@ def get_status(val):
     elif val < 99: return "⚠️ 存在通缩风险"
     else: return "✅ 物价温和稳定"
 
-# ----- 预测功能开始 -----
-forecast_text = ""
+# ================= 预测功能（智能降级版）=================
+forecast_text = "⚠️ 当前数据样本不足，无法使用高级统计模型。"
 forecast_df = pd.DataFrame()
-if len(data) >= 12: # 数据够长才做预测
+last_date = data['月份'].iloc[-1]
+
+# 如果数据点超过20个，尝试使用高级统计模型 (Holt-Winters)
+if len(data) >= 24:
     try:
-        # 使用 Holt-Winters 进行预测（模型参数自动匹配）
-        model = ExponentialSmoothing(data[col_name], trend='add', seasonal=None).fit()
-        # 预测未来 3 个月
-        forecast_steps = 3
-        forecast_values = model.forecast(forecast_steps)
+        # 加入季节性周期(12个月)，防止因季节性波动过大导致报错
+        model = ExponentialSmoothing(data[col_name], trend='add', seasonal='add', seasonal_periods=12).fit()
+        forecast_values = model.forecast(3)
         
-        # 构建预测的数据框
-        last_date = data['月份'].iloc[-1]
-        forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=forecast_steps, freq='MS')
+        forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=3, freq='MS')
         forecast_df = pd.DataFrame({'月份': forecast_dates, '预测值': forecast_values})
-        forecast_text = f"💡 **模型预测**：根据过去数据推算，未来 3 个月的指标趋势平缓，预计下个月数值为 **{forecast_values[0]:.2f}**。"
-    except Exception as e:
-        forecast_text = "⚠️ 当前数据波动过大或样本不足，无法进行精确预测。"
-# ----- 预测功能结束 -----
+        forecast_text = f"💡 **模型预测**：根据过去数据趋势推算，预计下个月数值约为 **{forecast_values[0]:.2f}**。"
+    except:
+        forecast_text = "⚠️ 因数据波动较大，自动降级为基础趋势预测。"
+        forecast_df = pd.DataFrame()
+        
+# 如果降级了，或者数据不足20个，用简单的移动平均趋势线兜底
+if forecast_df.empty and len(data) >= 12:
+    try:
+        # 简单向后延伸最近6个月的上升/下降趋势
+        last_6m_avg = data[col_name].iloc[-6:].mean()
+        last_3m_avg = data[col_name].iloc[-3:].mean()
+        # 如果近3个月均值高于近6个月，说明微涨
+        if last_3m_avg > last_6m_avg: 
+            val_next = last_3m_avg + 0.2
+        elif last_3m_avg < last_6m_avg: 
+            val_next = last_3m_avg - 0.2
+        else: 
+            val_next = last_3m_avg
+            
+        forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=3, freq='MS')
+        forecast_df = pd.DataFrame({'月份': forecast_dates, '预测值': [val_next, val_next+0.1, val_next+0.2]})
+        forecast_text = f"💡 **趋势预估**：基于最近趋势，预计下个月数值约为 **{val_next:.2f}**。"
+    except:
+        forecast_text = "⚠️ 预测数据不足，无法准确计算。"
+# ================= 预测功能结束 =================
 
 fig_ma = go.Figure()
 fig_ma.add_trace(go.Scatter(
@@ -73,12 +94,12 @@ fig_ma.add_trace(go.Scatter(
 fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['3个月移动均线'], mode='lines', name='3个月移动均线'))
 fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['6个月移动均线'], mode='lines', name='6个月移动均线'))
 
-# 画预测线（如果没有预测数据，则不画）
+# 画预测线
 if not forecast_df.empty:
     fig_ma.add_trace(go.Scatter(
         x=forecast_df['月份'], y=forecast_df['预测值'],
         mode='lines+markers', name='未来3个月预测趋势',
-        line=dict(dash='dash', color='red'), # 使用红色虚线突出显示预测
+        line=dict(dash='dash', color='red'),
         marker=dict(color='red'),
         hovertemplate="预测月份: %{x|%Y年%m月}<br>预测数值: %{y:.2f}<extra>预测</extra>"
     ))
@@ -86,7 +107,6 @@ if not forecast_df.empty:
 fig_ma.update_xaxes(tickformat="%Y年%m月", dtick="M12")
 st.plotly_chart(fig_ma, use_container_width=True)
 
-# 在图表下方展示预测结果
 if forecast_text:
     st.info(forecast_text)
 
@@ -120,7 +140,7 @@ fig_dual.update_layout(
 )
 st.plotly_chart(fig_dual, use_container_width=True)
 
-# ==================== AI解读 ====================
+# ==================== AI文字解读 ====================
 with st.expander("🤖 点击查看AI动态解读（基于最新数据）"):
     latest_cpi = cpi_df.iloc[-1]
     latest_ppi = ppi_df.iloc[-1]
