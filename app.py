@@ -51,8 +51,10 @@ last_date = data['月份'].iloc[-1]
 
 if col_name == '当月':
     ref_range = "（参考平稳区间：97.0 ~ 103.0）"
+    data_name = "PPI (当月)"
 else:
     ref_range = "（参考平稳区间：99.0 ~ 103.0）"
+    data_name = col_name
 
 if len(data) >= 24:
     try:
@@ -60,9 +62,8 @@ if len(data) >= 24:
         forecast_values = model.forecast(3)
         forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=3, freq='MS')
         forecast_df = pd.DataFrame({'月份': forecast_dates, '预测值': forecast_values})
-        # 给预测值加上状态判断
         forecast_df['预测状态'] = forecast_df['预测值'].apply(get_status)
-        forecast_text = f"💡 **模型预测**：根据过去数据趋势推算，预计下个月数值约为 **{forecast_values[0]:.2f}** {ref_range}。"
+        forecast_text = f"💡 **{data_name} 模型预测**：基于过去数据趋势推算，预计下个月数值约为 **{forecast_values[0]:.2f}** {ref_range}。"
     except:
         forecast_text = "⚠️ 因数据波动较大，自动降级为基础趋势预测。"
         forecast_df = pd.DataFrame()
@@ -80,9 +81,8 @@ if forecast_df.empty and len(data) >= 12:
             
         forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=3, freq='MS')
         forecast_df = pd.DataFrame({'月份': forecast_dates, '预测值': [val_next, val_next+0.1, val_next+0.2]})
-        # 给预测值加上状态判断
         forecast_df['预测状态'] = forecast_df['预测值'].apply(get_status)
-        forecast_text = f"💡 **趋势预估**：基于最近趋势，预计下个月数值约为 **{val_next:.2f}** {ref_range}。"
+        forecast_text = f"💡 **{data_name} 趋势预估**：基于最近趋势，预计下个月数值约为 **{val_next:.2f}** {ref_range}。"
     except:
         forecast_text = "⚠️ 预测数据不足，无法准确计算。"
 # ================= 预测功能结束 =================
@@ -90,25 +90,37 @@ if forecast_df.empty and len(data) >= 12:
 fig_ma = go.Figure()
 fig_ma.add_trace(go.Scatter(
     x=data['月份'], y=data[col_name],
-    mode='lines+markers', name=selected_metric,
+    mode='lines+markers', name='实际数据',
     text=[get_status(v) for v in data[col_name]],
     hovertemplate="月份: %{x|%Y年%m月}<br>数值: %{y:.2f}<br><b>📌 状态: %{text}</b><extra></extra>"
 ))
-fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['3个月移动均线'], mode='lines', name='3个月移动均线'))
-fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['6个月移动均线'], mode='lines', name='6个月移动均线'))
+fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['3个月移动均线'], mode='lines', name='3个月移动均线 (短期)'))
+fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['6个月移动均线'], mode='lines', name='6个月移动均线 (长期)'))
 
-# 👇【关键修改】：在预测线里加入预测状态
+# 预测线
 if not forecast_df.empty:
     fig_ma.add_trace(go.Scatter(
         x=forecast_df['月份'], y=forecast_df['预测值'],
         mode='lines+markers', name='未来3个月预测趋势',
         line=dict(dash='dash', color='red'),
         marker=dict(color='red'),
-        text=forecast_df['预测状态'], # 绑定预测状态
+        text=forecast_df['预测状态'],
         hovertemplate="预测月份: %{x|%Y年%m月}<br>预测数值: %{y:.2f}<br><b>📌 预测情况: %{text}</b><extra>预测</extra>"
     ))
 
 fig_ma.update_xaxes(tickformat="%Y年%m月", dtick="M12")
+
+# 🌟【核心修改】在图表内部底部添加图例和参考值的说明框
+fig_ma.add_annotation(
+    xref="paper", yref="paper",
+    x=0.5, y=-0.15,  # 文字位于图表正下方
+    text=f"🔵 实际数据 | 🔷 3个月均线 (平滑短期波动) | 🔴 6个月均线 (平滑长期波动) | 预测区间: {ref_range}",
+    showarrow=False,
+    font=dict(size=12, color="#333333")
+)
+# 调整图表底部留白，防止文字被切断
+fig_ma.update_layout(margin=dict(b=80))
+
 st.plotly_chart(fig_ma, use_container_width=True)
 
 if forecast_text:
