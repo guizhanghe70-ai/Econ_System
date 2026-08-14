@@ -5,7 +5,6 @@ import plotly.express as px
 import numpy as np
 import base64
 
-# 尝试导入高级统计模型
 try:
     from statsmodels.tsa.holtwinters import ExponentialSmoothing
     HAS_STATSMODELS = True
@@ -13,7 +12,7 @@ except ImportError:
     HAS_STATSMODELS = False
 
 st.set_page_config(page_title="经济运行分析系统", layout="wide")
-st.title("📊 中国宏观双指标看板 (混合预测版)")
+st.title("📊 中国宏观双指标看板 (绝对稳定版)")
 
 try:
     cpi_df = pd.read_csv('cpi_data.csv')
@@ -54,31 +53,37 @@ elif cpi_val < cpi_warning_low:
 else:
     st.success(f"✅ 当前 CPI 为 {cpi_val}，平稳区间。")
 
-# ==================== 核心：混合双打预测机制 ====================
+# ==================== 核心：无红屏预测机制 ====================
 def safe_forecast(series, steps=3):
-    """尝试AI模型预测，失败则自动降级为简单趋势预测，绝不报错弹窗"""
+    """统一返回纯Python列表，绝对不让Pandas参与布尔判断"""
     if len(series) < 3: return None, "数据不足"
     
     forecast_vals = None
-    method_used = "AI统计模型"
+    method_used = "基础趋势推算"
     
     # 尝试 AI 模型
     if HAS_STATSMODELS:
         try:
-            # 清理数据防止内部报错
             clean_series = series.dropna()
             if len(clean_series) > 4:
                 model = ExponentialSmoothing(clean_series, trend='add', seasonal=None, initialization_method='estimated').fit()
-                forecast_vals = model.forecast(steps)
+                # ⚠️ 强制转换成标准 Python List，防止后续 `if` 判断报错
+                preds = model.forecast(steps).tolist()
+                forecast_vals = preds
+                method_used = "AI统计模型"
         except:
             forecast_vals = None
 
     # 如果 AI 模型失败，降级为基础趋势
     if forecast_vals is None:
-        method_used = "基础趋势推算"
-        recent_diff = series.diff().tail(3).mean()
-        last_val = series.iloc[-1]
-        forecast_vals = [last_val + recent_diff * (i+1) for i in range(steps)]
+        try:
+            diffs = series.diff().tail(3).dropna()
+            recent_diff = diffs.mean() if len(diffs) > 0 else 0
+            last_val = series.iloc[-1]
+            forecast_vals = [last_val + recent_diff * (i+1) for i in range(steps)]
+            method_used = "基础趋势推算"
+        except:
+            return None, "预测失败"
 
     return forecast_vals, method_used
 
@@ -115,7 +120,8 @@ fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['6个月移动均线'], mod
 last_date = data['月份'].iloc[-1]
 forecast_vals, pred_method = safe_forecast(data[col_name])
 forecast_text = ""
-if forecast_vals:
+# 🟢 核心修复点：改成 `is not None` 避免 Pandas 布尔警告
+if forecast_vals is not None:
     forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=3, freq='MS')
     forecast_df = pd.DataFrame({'月份': forecast_dates, '预测值': forecast_vals})
     forecast_df['预测状态'] = forecast_df['预测值'].apply(lambda x: get_status(x, cpi_warning_high, cpi_warning_low))
@@ -148,7 +154,7 @@ if m2_cols:
         hovertemplate="月份: %{x|%Y年%m月}<br>数值: %{y:.2f}%<br><b>📌 状态: %{text}</b><extra></extra>"))
 
     m2_vals, m2_method = safe_forecast(m2_df[selected_m2])
-    if m2_vals:
+    if m2_vals is not None:
         m2_last = m2_df['月份'].iloc[-1]
         m2_dates = pd.date_range(start=m2_last + pd.DateOffset(months=1), periods=3, freq='MS')
         m2_f_df = pd.DataFrame({'月份': m2_dates, '预测值': m2_vals})
@@ -161,7 +167,7 @@ if m2_cols:
     fig_m2.update_xaxes(tickformat="%Y年%m月", dtick="M12")
     fig_m2.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
     st.plotly_chart(fig_m2, use_container_width=True)
-    if m2_vals: st.info(f"💡 **M2 {m2_method}**：预计下月同比增长约为 **{m2_vals[0]:.2f}%**。")
+    if m2_vals is not None: st.info(f"💡 **M2 {m2_method}**：预计下月同比增长约为 **{m2_vals[0]:.2f}%**。")
 
 
 # ==================== PMI 图表 ====================
@@ -182,7 +188,7 @@ fig_pmi.add_trace(go.Scatter(
     hovertemplate="月份: %{x|%Y年%m月}<br>PMI: %{y:.2f}<br><b>📌 状态: %{text}</b><extra></extra>"))
 
 pmi_vals, pmi_method = safe_forecast(pmi_data[selected_pmi])
-if pmi_vals:
+if pmi_vals is not None:
     pmi_last = pmi_data['月份'].iloc[-1]
     pmi_dates = pd.date_range(start=pmi_last + pd.DateOffset(months=1), periods=3, freq='MS')
     pmi_f_df = pd.DataFrame({'月份': pmi_dates, '预测值': pmi_vals})
@@ -197,7 +203,7 @@ fig_pmi.add_hline(y=pmi_line, line_dash="dash", line_color="red", annotation_tex
 fig_pmi.update_xaxes(tickformat="%Y年%m月", dtick="M12")
 fig_pmi.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
 st.plotly_chart(fig_pmi, use_container_width=True)
-if pmi_vals: st.info(f"💡 **PMI {pmi_method}**：预计下月 PMI 约为 **{pmi_vals[0]:.2f}**。")
+if pmi_vals is not None: st.info(f"💡 **PMI {pmi_method}**：预计下月 PMI 约为 **{pmi_vals[0]:.2f}**。")
 
 # ==================== 导出与数据表 ====================
 st.subheader("📥 数据导出")
