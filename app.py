@@ -146,11 +146,15 @@ with col2:
     csv_pmi = pmi_df.to_csv(index=False).encode('utf-8-sig')
     st.download_button("📥 下载 PMI 数据 (CSV)", csv_pmi, "pmi_data.csv", "text/csv")
 
-# ==================== 原有AI解读 ====================
+# ==================== AI 解读（已修复 PMI 列名报错问题） ====================
 with st.expander("🤖 点击查看AI动态解读（基于最新数据）"):
+    # 🟢【核心修复】动态获取 PMI 的列名，避免因名称不统一导致红屏报错
+    pmi_col_name = pmi_df.columns[1]  # 通常 PMI 数据的第一列是月份，第二列是指标
+    pmi_val = pmi_df.iloc[-1][pmi_col_name] # 提取最新值
+
     st.write(f"🔹 **最新月份 ({latest_cpi['月份'].strftime('%Y年%m月')}) 宏观快照：**")
     st.write(f"- 全国 CPI：**{latest_cpi['全国-当月']}** （参考：99.0 ~ 103.0）")
-    st.write(f"- 制造业 PMI：**{pmi_df.iloc[-1]['制造业PMI']}** （>50 为扩张，<50 为收缩）")
+    st.write(f"- {pmi_col_name}：**{pmi_val}** （>50 为扩张，<50 为收缩）")
 
 # ==================== 数据表 ====================
 with st.expander("📋 点击展开查看所有原始数据表格"):
