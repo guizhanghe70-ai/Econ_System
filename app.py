@@ -84,7 +84,7 @@ fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['6个月移动均线'], mod
 last_date = data['月份'].iloc[-1]
 forecast_df = pd.DataFrame()
 forecast_text = "⚠️ 数据不足以预测。"
-if len(data) >= 12:
+if len(data) >= 6:
     try:
         model = ExponentialSmoothing(data[col_name], trend='add', seasonal=None).fit()
         forecast_values = model.forecast(3)
