@@ -12,7 +12,7 @@ except ImportError:
     HAS_STATSMODELS = False
 
 st.set_page_config(page_title="经济运行分析系统", layout="wide")
-st.title("📊 中国宏观双指标看板 (含AI解读预测)")
+st.title("📊 中国宏观双指标看板 (含企业与政策建议)")
 
 try:
     cpi_df = pd.read_csv('cpi_data.csv')
@@ -53,7 +53,7 @@ elif cpi_val < cpi_warning_low:
 else:
     st.success(f"✅ 当前 CPI 为 {cpi_val}，平稳区间。")
 
-# ==================== 核心：预测及AI影响说明 ====================
+# ==================== 核心：预测及AI影响建议 ====================
 def safe_forecast(series, steps=3):
     if len(series) < 3: return None, "数据不足"
     forecast_vals = None
@@ -79,24 +79,74 @@ def safe_forecast(series, steps=3):
             return None, "预测失败"
     return forecast_vals, method_used
 
-# 🟢【新增核心】：根据预测数值自动生成影响与防范建议
+# 🟢【核心升级】：为企业直接提供决策建议
 def get_forecast_description(name, val):
-    if "CPI" in name:
-        if val > 103: return f"📈 **影响**：数值较高，预示消费端存在**通胀压力**，购买力将被稀释。**防范**：可适度关注抗通胀资产，留意日常消费品涨价情况。"
-        elif val < 99: return f"📉 **影响**：数值偏低，预示经济面临**通缩风险**，需求疲软。**防范**：需关注国家是否有后续经济刺激政策出台。"
-        else: return f"✅ **影响**：处于**温和区间**，物价平稳。**防范**：当前无特殊风险，维持日常经营监测即可。"
-    elif "PPI" in name:
-        if val > 103: return f"📈 **影响**：出厂价较高，企业成本传导压力大。**防范**：关注大宗商品价格走势，防范原材料成本进一步上涨。"
-        elif val < 97: return f"📉 **影响**：出厂价较低，工厂订单需求偏冷。**防范**：留意工业去库存周期，警惕下游需求不足风险。"
-        else: return f"✅ **影响**：工业品价格**平稳**。**防范**：目前处于正常区间。"
-    elif "M2" in name:
-        if val > 15: return f"🚀 **影响**：增速较高，市场**流动性偏宽松**，可能助推资产价格走高。**防范**：警惕资产泡沫风险，留意央行货币政策收紧信号。"
-        elif val < 8: return f"💧 **影响**：增速较低，市场**流动性偏紧缩**，企业融资成本可能上升。**防范**：关注资金利率变动，留意央行后续是否降息降准。"
-        else: return f"✅ **影响**：增速处于**合理区间**。**防范**：无特殊防范事项，保持正常资金周转。"
-    elif "PMI" in name:
-        if val > 50: return f"✅ **影响**：处于荣枯线之上，**扩张区间**，制造业景气度良好。**防范**：积极备产，同时警惕原材料随订单增加而涨价。"
-        else: return f"⚠️ **影响**：跌破荣枯线，处于**收缩区间**，订单减少，行业承压。**防范**：需警惕行业裁员，密切关注后续稳增长政策。"
-    return "结合历史数据判断趋势。"
+    # 前缀数据展示
+    desc = f"**📊 指标分析**：{name} 预计下月预测值为 **{val:.2f}**。\n\n"
+    
+    if "CPI" in name: # 居民消费价格
+        if val > 103:
+            desc += "**📈 宏观判断**：进入较高通胀压力区间，消费端物价上涨较快。\n"
+            desc += "**⚡ 核心影响**：消费者购买力被稀释，日常消费成本上升，储蓄贬值。\n"
+            desc += "**🎯 政策建议**：国家层面应**适度收紧货币政策**，防范经济过热，控制通胀预期。\n"
+            desc += "**🏢 企业对策**：可**适当提前锁定原材料成本**，但需警惕终端消费者购买力下降影响销量，避免盲目高价囤货。"
+        elif val < 99:
+            desc += "**📉 宏观判断**：进入通缩风险区间，消费需求整体疲软。\n"
+            desc += "**⚡ 核心影响**：企业利润承压，居民倾向于储蓄而非消费，经济内生增长动力不足。\n"
+            desc += "**🎯 政策建议**：国家应**降准降息，加大民生与基建领域的投资力度**，刺激总需求。\n"
+            desc += "**🏢 企业对策**：企业应**主动降价去库存，以价换量**；暂停非必要的扩产投资，储备现金流以度过需求低迷期。"
+        else:
+            desc += "**✅ 宏观判断**：处于健康温和通胀区间，物价平稳。\n"
+            desc += "**⚡ 核心影响**：物价温和，有助于企业正常经营和居民稳步消费。\n"
+            desc += "**🎯 政策建议**：国家应**保持货币政策稳健**，维持当前投资节奏，灵活适度调节。\n"
+            desc += "**🏢 企业对策**：企业应**维持正常生产与供销节奏**，可根据市场实际需求进行小规模扩张，避免冒进。"
+            
+    elif "PPI" in name: # 工业生产者出厂价
+        if val > 103:
+            desc += "**📈 宏观判断**：工业品出厂价格偏高，上游原材料成本压力大。\n"
+            desc += "**⚡ 核心影响**：下游制造业利润空间被严重挤压，中小企业生存压力增大。\n"
+            desc += "**🎯 政策建议**：国家应**保供稳价**，适当投放战略物资储备，防止上游价格过度上涨。\n"
+            desc += "**🏢 企业对策**：中下游企业应**积极寻找替代原材料**，或与上游签订长单锁定价格，同时通过提高产品附加值来转嫁成本。"
+        elif val < 97:
+            desc += "**📉 宏观判断**：工业品出厂价格偏低，工厂订单需求偏冷。\n"
+            desc += "**⚡ 核心影响**：工业产能利用率下降，企业开工率不足，工业通缩迹象明显。\n"
+            desc += "**🎯 政策建议**：国家应**通过新基建、制造业扶持项目加大固定资产投资**，拉动工业品需求。\n"
+            desc += "**🏢 企业对策**：企业应**谨慎接单，避免产能过剩**；利用同行的减产潮优化自身产能结构，静待市场供需重新平衡。"
+        else:
+            desc += "**✅ 宏观判断**：工业品价格处于正常波动区间。\n"
+            desc += "**⚡ 核心影响**：上下游价格传导平稳，企业成本可控。\n"
+            desc += "**🎯 政策建议**：保持现有产业扶持政策，**投资按既定规划执行**。\n"
+            desc += "**🏢 企业对策**：企业可**按现有的采购和销售计划稳定经营**，保持正常的原材料库存周转。"
+            
+    elif "M2" in name: # 广义货币
+        if val > 15:
+            desc += "**🚀 宏观判断**：市场流动性非常宽松，货币供应量偏大。\n"
+            desc += "**⚡ 核心影响**：容易催生资本市场泡沫，推高资产价格（如核心城市房价、大宗商品）。\n"
+            desc += "**🎯 政策建议**：国家应**防范资产泡沫，控制宏观杠杆率**，货币政策应转向“收紧流动性”。\n"
+            desc += "**🏢 企业对策**：有融资需求的企业**应抓紧时机利用低成本资金**进行技术升级或扩张；但需警惕资金最终流向股市/楼市，避免借钱炒高风险资产。"
+        elif val < 8:
+            desc += "**💧 宏观判断**：市场流动性偏紧缩，资金供给不足。\n"
+            desc += "**⚡ 核心影响**：企业融资成本上升，实体经济可能面临“缺血”和融资难的问题。\n"
+            desc += "**🎯 政策建议**：国家应**降准降息，加大信贷投放，扩大基础设施投资规模**，释放流动性。\n"
+            desc += "**🏢 企业对策**：企业应**控制有息负债，加速应收账款周转**，确保手上有充裕现金流，避免在资金收紧时盲目借入高息贷款。"
+        else:
+            desc += "**✅ 宏观判断**：市场流动性处于合理充裕区间。\n"
+            desc += "**⚡ 核心影响**：宏观资金面平稳，企业信贷条件适中。\n"
+            desc += "**🎯 政策建议**：国家应**实行精准滴灌**，继续支持中小微企业。\n"
+            desc += "**🏢 企业对策**：可**适度进行债务扩张**，利用当前利率水平合理安排长短期融资比例，维持稳健的财务杠杆。"
+            
+    elif "PMI" in name: # 采购经理指数
+        if val > 50:
+            desc += "**✅ 宏观判断**：处于荣枯线之上，制造业呈扩张态势，景气度转好。\n"
+            desc += "**⚡ 核心影响**：订单增长，企业产能利用率提升，就业市场稳固。\n"
+            desc += "**🎯 政策建议**：国家应**依靠市场自发动力**，政府可适度减少直接干预，**投资重点向科技创新倾斜**。\n"
+            desc += "**🏢 企业对策**：企业应**加大采购和备产力度，适当增加招工**，积极抢占市场份额；但需警惕扩张过快带来的现金流压力。"
+        else:
+            desc += "**⚠️ 宏观判断**：跌破荣枯线，处于收缩区间，制造业景气度下行。\n"
+            desc += "**⚡ 核心影响**：制造业订单减少，行业普遍承压，可能引发局部裁员。\n"
+            desc += "**🎯 政策建议**：国家应**加大逆周期调节力度**，**加快发行专项债，启动一批重大基建工程项目**。\n"
+            desc += "**🏢 企业对策**：企业应**主动削减非核心开支，清理积压库存**；暂停重资产投资计划，以“保现金、保生存”为第一要务，等待市场回暖。"
+    return desc
 
 def get_status(val, high, low):
     if val > high: return "⚠️ 存在通胀压力"
@@ -140,9 +190,7 @@ if forecast_vals is not None:
         line=dict(dash='dash', color='red'), marker=dict(color='red'), text=forecast_df['预测状态'],
         hovertemplate="预测月份: %{x|%Y年%m月}<br>预测数值: %{y:.2f}<br><b>📌 预测情况: %{text}</b><extra>预测</extra>"))
     
-    # 🟢【整合说明】
-    desc = get_forecast_description(data_type, forecast_vals[0])
-    forecast_text = f"💡 **{data_type} {pred_method}**：预计下月数值约为 **{forecast_vals[0]:.2f}**。{desc}"
+    forecast_text = f"💡 **{data_type} {pred_method}**:\n\n{get_forecast_description(data_type, forecast_vals[0])}"
 
 fig_ma.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
 fig_ma.update_xaxes(tickformat="%Y年%m月", dtick="M12")
@@ -181,10 +229,8 @@ if m2_cols:
     fig_m2.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
     st.plotly_chart(fig_m2, use_container_width=True)
     
-    # 🟢【整合说明】
     if m2_vals is not None:
-        m2_desc = get_forecast_description("M2", m2_vals[0])
-        st.info(f"💡 **M2 {m2_method}**：预计下月同比增长约为 **{m2_vals[0]:.2f}%**。{m2_desc}")
+        st.info(f"💡 **M2 {m2_method}**:\n\n{get_forecast_description('M2', m2_vals[0])}")
 
 
 # ==================== PMI 图表 ====================
@@ -221,10 +267,9 @@ fig_pmi.update_xaxes(tickformat="%Y年%m月", dtick="M12")
 fig_pmi.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
 st.plotly_chart(fig_pmi, use_container_width=True)
 
-# 🟢【整合说明】
 if pmi_vals is not None:
-    pmi_desc = get_forecast_description("PMI", pmi_vals[0])
-    st.info(f"💡 **PMI {pmi_method}**：预计下月 PMI 约为 **{pmi_vals[0]:.2f}**。{pmi_desc}")
+    st.info(f"💡 **PMI {pmi_method}**:\n\n{get_forecast_description('PMI', pmi_vals[0])}")
+
 
 # ==================== 导出与数据表 ====================
 st.subheader("📥 数据导出")
