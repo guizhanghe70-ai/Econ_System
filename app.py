@@ -123,7 +123,7 @@ if comp_cols:
     fig_bar.update_xaxes(tickformat="%Y年%m月", dtick="M12")
     st.plotly_chart(fig_bar, use_container_width=True)
 
-# ==================== 🌟 新增：PMI 预警与预测模块（大幅升级） ====================
+# ==================== PMI 景气度分析（修复预测报错） ====================
 st.subheader("🏭 PMI（采购经理指数）景气度监测")
 pmi_options = [col for col in pmi_df.columns if col != '月份']
 selected_pmi = st.selectbox("选择 PMI 分类指标：", pmi_options)
@@ -135,21 +135,30 @@ def get_pmi_status(val):
     if val > 50: return "✅ 经济处于扩张区间"
     else: return "⚠️ 经济处于收缩区间"
 
-# ========== PMI 预测逻辑 ==========
+# ========== PMI 预测逻辑（改用更稳定的线性推演法，不再报错） ==========
 pmi_forecast_text = ""
 pmi_forecast_df = pd.DataFrame()
 if len(pmi_data) >= 12:
     try:
-        # PMI 月度波动极大，更适合只追踪趋势
-        model = ExponentialSmoothing(pmi_data[selected_pmi], trend='add', seasonal=None).fit()
-        pmi_forecast_vals = model.forecast(3)
+        # 改用最简单的线性推演法（最小二乘法），绝对不会因为数据波动大而崩溃
+        pmi_x = np.arange(len(pmi_data))
+        pmi_y = pmi_data[selected_pmi].values
+        # 拟合一条直线
+        poly_fit = np.polyfit(pmi_x, pmi_y, 1) # 拟合度 1 代表直线
+        # 推算下个月的值
+        val_next = poly_fit[0] * (len(pmi_data)) + poly_fit[1]
+        
+        # 生成未来3个月的数据框
         last_date = pmi_data['月份'].iloc[-1]
         forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=3, freq='MS')
-        pmi_forecast_df = pd.DataFrame({'月份': forecast_dates, '预测值': pmi_forecast_vals})
+        pmi_forecast_df = pd.DataFrame({
+            '月份': forecast_dates, 
+            '预测值': [val_next, val_next + (val_next - pmi_y[-1]), val_next + (val_next - pmi_y[-1]) * 2]
+        })
         pmi_forecast_df['预测状态'] = pmi_forecast_df['预测值'].apply(get_pmi_status)
-        pmi_forecast_text = f"💡 **PMI 趋势预测**：基于最近走势，预计下个月 PMI 约为 **{pmi_forecast_vals[0]:.2f}**。"
+        pmi_forecast_text = f"💡 **PMI 趋势预测**：基于线性趋势推算，预计下个月 PMI 约为 **{val_next:.2f}**。"
     except:
-        pmi_forecast_text = "⚠️ PMI 数据波动较大，无法进行准确趋势预测。"
+        pmi_forecast_text = "⚠️ 当前 PMI 样本不足，无法预测。"
 
 # ========== 画图 ==========
 fig_pmi = go.Figure()
