@@ -95,44 +95,115 @@ if len(data) >= 6: # 已改为6个月即可触发
     except:
         pass
 
-# 🟢【核心修复】：给预测线加上正确的状态参数
 if not forecast_df.empty:
-    # 使用 lambda 完美把侧边栏的阈值传进去
     forecast_df['预测状态'] = forecast_df['预测值'].apply(lambda x: get_status(x, cpi_warning_high, cpi_warning_low))
     fig_ma.add_trace(go.Scatter(x=forecast_df['月份'], y=forecast_df['预测值'], mode='lines+markers', name='未来3个月预测趋势',
         line=dict(dash='dash', color='red'), marker=dict(color='red'), 
         text=forecast_df['预测状态'],
         hovertemplate="预测月份: %{x|%Y年%m月}<br>预测数值: %{y:.2f}<br><b>📌 预测情况: %{text}</b><extra>预测</extra>"))
 
+# 🔥 核心修改：统一放大图表和悬浮窗字体
+fig_ma.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
 fig_ma.update_xaxes(tickformat="%Y年%m月", dtick="M12")
 fig_ma.update_layout(margin=dict(b=80))
 st.plotly_chart(fig_ma, use_container_width=True)
 if forecast_text: st.info(forecast_text)
 
-# ==================== M2 数据展示栏 ====================
+
+# ==================== M2 数据展示栏 (加入预测与悬浮说明) ====================
 st.subheader("💰 资金面指标: M2 (广义货币) 同比增长率")
-m2_cols = [col for col in m2_df.columns if '同比' in col][:1]
+m2_cols = [col for col in m2_df.columns if '同比' in col]
 if m2_cols:
     selected_m2 = m2_cols[0]
-    fig_m2 = px.line(m2_df, x='月份', y=selected_m2, title=f"M2 同比增长走势")
-    fig_m2.update_xaxes(tickformat="%Y年%m月", dtick="M12")
-    st.plotly_chart(fig_m2, use_container_width=True)
-    st.caption("💡 M2 增速是经济货币供应的宽口径指标，M2 大涨往往预示着未来几个月 CPI 会跟随上涨。")
+    
+    # M2 的状态判定标准
+    def get_m2_status(val):
+        if val > 15: return "🔵 货币供应偏宽松"
+        elif val < 8: return "🔴 货币供应偏紧缩"
+        else: return "🟢 货币供应平稳"
 
-# ==================== PMI 景气度 (使用了自定义荣枯线) ====================
+    # 预测 M2
+    m2_forecast_text = ""
+    m2_forecast_df = pd.DataFrame()
+    if len(m2_df) >= 6:
+        try:
+            m2_model = ExponentialSmoothing(m2_df[selected_m2], trend='add', seasonal=None).fit()
+            m2_forecast_vals = m2_model.forecast(3)
+            m2_last_date = m2_df['月份'].iloc[-1]
+            m2_future_dates = pd.date_range(start=m2_last_date + pd.DateOffset(months=1), periods=3, freq='MS')
+            m2_forecast_df = pd.DataFrame({'月份': m2_future_dates, '预测值': m2_forecast_vals})
+            m2_forecast_text = f"💡 **M2 趋势预估**：预计下个月 M2 同比增长约为 **{m2_forecast_vals[0]:.2f}%**。"
+        except:
+            pass
+
+    # 构建 M2 图表
+    fig_m2 = go.Figure()
+    fig_m2.add_trace(go.Scatter(x=m2_df['月份'], y=m2_df[selected_m2], mode='lines+markers', name=selected_m2,
+        text=[get_m2_status(v) for v in m2_df[selected_m2]],
+        hovertemplate="月份: %{x|%Y年%m月}<br>数值: %{y:.2f}%<br><b>📌 状态: %{text}</b><extra></extra>"))
+
+    if not m2_forecast_df.empty:
+        m2_forecast_df['预测状态'] = m2_forecast_df['预测值'].apply(get_m2_status)
+        fig_m2.add_trace(go.Scatter(x=m2_forecast_df['月份'], y=m2_forecast_df['预测值'], mode='lines+markers', 
+            name='未来3个月预测趋势', line=dict(dash='dash', color='orange'), marker=dict(color='orange'),
+            text=m2_forecast_df['预测状态'],
+            hovertemplate="预测月份: %{x|%Y年%m月}<br>预测数值: %{y:.2f}%<br><b>📌 预测情况: %{text}</b><extra>预测</extra>"))
+            
+    fig_m2.update_xaxes(tickformat="%Y年%m月", dtick="M12")
+    # 🔥 核心修改：放大字体
+    fig_m2.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
+    st.plotly_chart(fig_m2, use_container_width=True)
+    st.caption("💡 M2 增速是货币供应的宽口径指标。通常 M2 增速 >15% 说明资金充裕，<8% 说明资金收紧，极端情况下会传导至 CPI。")
+    if m2_forecast_text: st.info(m2_forecast_text)
+
+
+# ==================== PMI 景气度 (加入预测与悬浮说明) ====================
 st.subheader("🏭 PMI（采购经理指数）景气度监测")
 pmi_options = [col for col in pmi_df.columns if col != '月份']
 selected_pmi = st.selectbox("选择 PMI 分类指标：", pmi_options)
 
 pmi_data = pmi_df[['月份', selected_pmi]].copy()
+
+def get_pmi_status(val):
+    return "✅ 经济处于扩张区间" if val > pmi_line else "⚠️ 经济处于收缩区间"
+
+# PMI 预测
+pmi_forecast_text = ""
+pmi_forecast_df = pd.DataFrame()
+if len(pmi_data) >= 6:
+    try:
+        pmi_model = ExponentialSmoothing(pmi_data[selected_pmi], trend='add', seasonal=None).fit()
+        pmi_forecast_vals = pmi_model.forecast(3)
+        pmi_last_date = pmi_data['月份'].iloc[-1]
+        pmi_future_dates = pd.date_range(start=pmi_last_date + pd.DateOffset(months=1), periods=3, freq='MS')
+        pmi_forecast_df = pd.DataFrame({'月份': pmi_future_dates, '预测值': pmi_forecast_vals})
+        pmi_forecast_text = f"💡 **PMI 趋势预估**：预计下个月 PMI 约为 **{pmi_forecast_vals[0]:.2f}**。"
+    except:
+        pass
+
+# 构建 PMI 图表
 fig_pmi = go.Figure()
 fig_pmi.add_trace(go.Scatter(
     x=pmi_data['月份'], y=pmi_data[selected_pmi],
     mode='lines+markers', name=selected_pmi,
-    hovertemplate="月份: %{x|%Y年%m月}<br>PMI数值: %{y:.2f}<extra></extra>"))
+    text=[get_pmi_status(v) for v in pmi_data[selected_pmi]],
+    hovertemplate="月份: %{x|%Y年%m月}<br>PMI数值: %{y:.2f}<br><b>📌 状态: %{text}</b><extra></extra>"))
+
+if not pmi_forecast_df.empty:
+    pmi_forecast_df['预测状态'] = pmi_forecast_df['预测值'].apply(get_pmi_status)
+    fig_pmi.add_trace(go.Scatter(
+        x=pmi_forecast_df['月份'], y=pmi_forecast_df['预测值'], mode='lines+markers', 
+        name='未来3个月预测趋势', line=dict(dash='dash', color='orange'), marker=dict(color='orange'),
+        text=pmi_forecast_df['预测状态'],
+        hovertemplate="预测月份: %{x|%Y年%m月}<br>预测数值: %{y:.2f}<br><b>📌 预测情况: %{text}</b><extra>预测</extra>"))
+
 fig_pmi.add_hline(y=pmi_line, line_dash="dash", line_color="red", annotation_text=f"自定义荣枯线 {pmi_line}")
 fig_pmi.update_xaxes(tickformat="%Y年%m月", dtick="M12")
+# 🔥 核心修改：放大字体
+fig_pmi.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
 st.plotly_chart(fig_pmi, use_container_width=True)
+if pmi_forecast_text: st.info(pmi_forecast_text)
+
 
 # ==================== 一键导出简报功能 ====================
 st.subheader("📥 数据导出与简报")
