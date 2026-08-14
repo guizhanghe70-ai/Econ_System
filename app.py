@@ -12,7 +12,7 @@ except ImportError:
     HAS_STATSMODELS = False
 
 st.set_page_config(page_title="经济运行分析系统", layout="wide")
-st.title("📊 中国宏观双指标看板 (绝对稳定版)")
+st.title("📊 中国宏观双指标看板 (含AI解读预测)")
 
 try:
     cpi_df = pd.read_csv('cpi_data.csv')
@@ -53,28 +53,21 @@ elif cpi_val < cpi_warning_low:
 else:
     st.success(f"✅ 当前 CPI 为 {cpi_val}，平稳区间。")
 
-# ==================== 核心：无红屏预测机制 ====================
+# ==================== 核心：预测及AI影响说明 ====================
 def safe_forecast(series, steps=3):
-    """统一返回纯Python列表，绝对不让Pandas参与布尔判断"""
     if len(series) < 3: return None, "数据不足"
-    
     forecast_vals = None
     method_used = "基础趋势推算"
-    
-    # 尝试 AI 模型
     if HAS_STATSMODELS:
         try:
             clean_series = series.dropna()
             if len(clean_series) > 4:
                 model = ExponentialSmoothing(clean_series, trend='add', seasonal=None, initialization_method='estimated').fit()
-                # ⚠️ 强制转换成标准 Python List，防止后续 `if` 判断报错
                 preds = model.forecast(steps).tolist()
                 forecast_vals = preds
                 method_used = "AI统计模型"
         except:
             forecast_vals = None
-
-    # 如果 AI 模型失败，降级为基础趋势
     if forecast_vals is None:
         try:
             diffs = series.diff().tail(3).dropna()
@@ -84,8 +77,26 @@ def safe_forecast(series, steps=3):
             method_used = "基础趋势推算"
         except:
             return None, "预测失败"
-
     return forecast_vals, method_used
+
+# 🟢【新增核心】：根据预测数值自动生成影响与防范建议
+def get_forecast_description(name, val):
+    if "CPI" in name:
+        if val > 103: return f"📈 **影响**：数值较高，预示消费端存在**通胀压力**，购买力将被稀释。**防范**：可适度关注抗通胀资产，留意日常消费品涨价情况。"
+        elif val < 99: return f"📉 **影响**：数值偏低，预示经济面临**通缩风险**，需求疲软。**防范**：需关注国家是否有后续经济刺激政策出台。"
+        else: return f"✅ **影响**：处于**温和区间**，物价平稳。**防范**：当前无特殊风险，维持日常经营监测即可。"
+    elif "PPI" in name:
+        if val > 103: return f"📈 **影响**：出厂价较高，企业成本传导压力大。**防范**：关注大宗商品价格走势，防范原材料成本进一步上涨。"
+        elif val < 97: return f"📉 **影响**：出厂价较低，工厂订单需求偏冷。**防范**：留意工业去库存周期，警惕下游需求不足风险。"
+        else: return f"✅ **影响**：工业品价格**平稳**。**防范**：目前处于正常区间。"
+    elif "M2" in name:
+        if val > 15: return f"🚀 **影响**：增速较高，市场**流动性偏宽松**，可能助推资产价格走高。**防范**：警惕资产泡沫风险，留意央行货币政策收紧信号。"
+        elif val < 8: return f"💧 **影响**：增速较低，市场**流动性偏紧缩**，企业融资成本可能上升。**防范**：关注资金利率变动，留意央行后续是否降息降准。"
+        else: return f"✅ **影响**：增速处于**合理区间**。**防范**：无特殊防范事项，保持正常资金周转。"
+    elif "PMI" in name:
+        if val > 50: return f"✅ **影响**：处于荣枯线之上，**扩张区间**，制造业景气度良好。**防范**：积极备产，同时警惕原材料随订单增加而涨价。"
+        else: return f"⚠️ **影响**：跌破荣枯线，处于**收缩区间**，订单减少，行业承压。**防范**：需警惕行业裁员，密切关注后续稳增长政策。"
+    return "结合历史数据判断趋势。"
 
 def get_status(val, high, low):
     if val > high: return "⚠️ 存在通胀压力"
@@ -120,7 +131,6 @@ fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['6个月移动均线'], mod
 last_date = data['月份'].iloc[-1]
 forecast_vals, pred_method = safe_forecast(data[col_name])
 forecast_text = ""
-# 🟢 核心修复点：改成 `is not None` 避免 Pandas 布尔警告
 if forecast_vals is not None:
     forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=3, freq='MS')
     forecast_df = pd.DataFrame({'月份': forecast_dates, '预测值': forecast_vals})
@@ -129,7 +139,10 @@ if forecast_vals is not None:
     fig_ma.add_trace(go.Scatter(x=forecast_df['月份'], y=forecast_df['预测值'], mode='lines+markers', name='未来3个月预测趋势',
         line=dict(dash='dash', color='red'), marker=dict(color='red'), text=forecast_df['预测状态'],
         hovertemplate="预测月份: %{x|%Y年%m月}<br>预测数值: %{y:.2f}<br><b>📌 预测情况: %{text}</b><extra>预测</extra>"))
-    forecast_text = f"💡 **{data_type} {pred_method}**：预计下月数值约为 **{forecast_vals[0]:.2f}**。"
+    
+    # 🟢【整合说明】
+    desc = get_forecast_description(data_type, forecast_vals[0])
+    forecast_text = f"💡 **{data_type} {pred_method}**：预计下月数值约为 **{forecast_vals[0]:.2f}**。{desc}"
 
 fig_ma.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
 fig_ma.update_xaxes(tickformat="%Y年%m月", dtick="M12")
@@ -167,7 +180,11 @@ if m2_cols:
     fig_m2.update_xaxes(tickformat="%Y年%m月", dtick="M12")
     fig_m2.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
     st.plotly_chart(fig_m2, use_container_width=True)
-    if m2_vals is not None: st.info(f"💡 **M2 {m2_method}**：预计下月同比增长约为 **{m2_vals[0]:.2f}%**。")
+    
+    # 🟢【整合说明】
+    if m2_vals is not None:
+        m2_desc = get_forecast_description("M2", m2_vals[0])
+        st.info(f"💡 **M2 {m2_method}**：预计下月同比增长约为 **{m2_vals[0]:.2f}%**。{m2_desc}")
 
 
 # ==================== PMI 图表 ====================
@@ -203,7 +220,11 @@ fig_pmi.add_hline(y=pmi_line, line_dash="dash", line_color="red", annotation_tex
 fig_pmi.update_xaxes(tickformat="%Y年%m月", dtick="M12")
 fig_pmi.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
 st.plotly_chart(fig_pmi, use_container_width=True)
-if pmi_vals is not None: st.info(f"💡 **PMI {pmi_method}**：预计下月 PMI 约为 **{pmi_vals[0]:.2f}**。")
+
+# 🟢【整合说明】
+if pmi_vals is not None:
+    pmi_desc = get_forecast_description("PMI", pmi_vals[0])
+    st.info(f"💡 **PMI {pmi_method}**：预计下月 PMI 约为 **{pmi_vals[0]:.2f}**。{pmi_desc}")
 
 # ==================== 导出与数据表 ====================
 st.subheader("📥 数据导出")
