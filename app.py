@@ -59,16 +59,15 @@ selected_metric = st.sidebar.selectbox("📌 选择你想查看的指标：", me
 if '当月' in selected_metric or '同比' in selected_metric or '环比' in selected_metric:
     data = ppi_df[['月份', '当月']].copy()
     col_name = '当月'
-    data_type = "PPI（工业生产者出厂价格指数）"
+    data_type = "PPI"
 else:
     data = cpi_df[['月份', selected_metric]].copy()
     col_name = selected_metric
-    data_type = "CPI（居民消费价格指数）"
+    data_type = "CPI"
 
 data['3个月移动均线'] = data[col_name].rolling(window=3).mean()
 data['6个月移动均线'] = data[col_name].rolling(window=6).mean()
 
-# 判断状态
 def get_status(val, high, low):
     if val > high: return "⚠️ 存在通胀压力"
     elif val < low: return "⚠️ 存在通缩风险"
@@ -81,19 +80,21 @@ fig_ma.add_trace(go.Scatter(x=data['月份'], y=data[col_name], mode='lines+mark
 fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['3个月移动均线'], mode='lines', name='3个月移动均线'))
 fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['6个月移动均线'], mode='lines', name='6个月移动均线'))
 
-# 预测逻辑
+# 主指标预测逻辑
 last_date = data['月份'].iloc[-1]
 forecast_df = pd.DataFrame()
-forecast_text = "⚠️ 数据不足以预测。"
-if len(data) >= 6: # 已改为6个月即可触发
+forecast_text = ""
+if len(data) >= 6:
     try:
-        model = ExponentialSmoothing(data[col_name], trend='add', seasonal=None).fit()
+        # 去除空值防止崩溃
+        clean_data = data[col_name].dropna()
+        model = ExponentialSmoothing(clean_data, trend='add', seasonal=None).fit()
         forecast_values = model.forecast(3)
         forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=3, freq='MS')
         forecast_df = pd.DataFrame({'月份': forecast_dates, '预测值': forecast_values})
-        forecast_text = f"💡 **趋势预估**：预计下个月数值约为 **{forecast_values[0]:.2f}**。"
+        forecast_text = f"💡 **{data_type} 趋势预估**：预计下个月数值约为 **{forecast_values[0]:.2f}**。"
     except:
-        pass
+        forecast_text = f"⚠️ {data_type} 数据波动较大，无法进行准确的趋势预测。"
 
 if not forecast_df.empty:
     forecast_df['预测状态'] = forecast_df['预测值'].apply(lambda x: get_status(x, cpi_warning_high, cpi_warning_low))
@@ -102,7 +103,6 @@ if not forecast_df.empty:
         text=forecast_df['预测状态'],
         hovertemplate="预测月份: %{x|%Y年%m月}<br>预测数值: %{y:.2f}<br><b>📌 预测情况: %{text}</b><extra>预测</extra>"))
 
-# 🔥 核心修改：统一放大图表和悬浮窗字体
 fig_ma.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
 fig_ma.update_xaxes(tickformat="%Y年%m月", dtick="M12")
 fig_ma.update_layout(margin=dict(b=80))
@@ -110,13 +110,12 @@ st.plotly_chart(fig_ma, use_container_width=True)
 if forecast_text: st.info(forecast_text)
 
 
-# ==================== M2 数据展示栏 (加入预测与悬浮说明) ====================
+# ==================== M2 数据展示栏 ====================
 st.subheader("💰 资金面指标: M2 (广义货币) 同比增长率")
 m2_cols = [col for col in m2_df.columns if '同比' in col]
 if m2_cols:
     selected_m2 = m2_cols[0]
     
-    # M2 的状态判定标准
     def get_m2_status(val):
         if val > 15: return "🔵 货币供应偏宽松"
         elif val < 8: return "🔴 货币供应偏紧缩"
@@ -127,16 +126,17 @@ if m2_cols:
     m2_forecast_df = pd.DataFrame()
     if len(m2_df) >= 6:
         try:
-            m2_model = ExponentialSmoothing(m2_df[selected_m2], trend='add', seasonal=None).fit()
+            # 主动去空值，防止模型崩塌
+            clean_m2 = m2_df[selected_m2].dropna()
+            m2_model = ExponentialSmoothing(clean_m2, trend='add', seasonal=None).fit()
             m2_forecast_vals = m2_model.forecast(3)
             m2_last_date = m2_df['月份'].iloc[-1]
             m2_future_dates = pd.date_range(start=m2_last_date + pd.DateOffset(months=1), periods=3, freq='MS')
             m2_forecast_df = pd.DataFrame({'月份': m2_future_dates, '预测值': m2_forecast_vals})
             m2_forecast_text = f"💡 **M2 趋势预估**：预计下个月 M2 同比增长约为 **{m2_forecast_vals[0]:.2f}%**。"
         except:
-            pass
+            m2_forecast_text = "⚠️ M2 数据波动较大，无法进行准确的趋势预测。"
 
-    # 构建 M2 图表
     fig_m2 = go.Figure()
     fig_m2.add_trace(go.Scatter(x=m2_df['月份'], y=m2_df[selected_m2], mode='lines+markers', name=selected_m2,
         text=[get_m2_status(v) for v in m2_df[selected_m2]],
@@ -150,14 +150,13 @@ if m2_cols:
             hovertemplate="预测月份: %{x|%Y年%m月}<br>预测数值: %{y:.2f}%<br><b>📌 预测情况: %{text}</b><extra>预测</extra>"))
             
     fig_m2.update_xaxes(tickformat="%Y年%m月", dtick="M12")
-    # 🔥 核心修改：放大字体
     fig_m2.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
     st.plotly_chart(fig_m2, use_container_width=True)
-    st.caption("💡 M2 增速是货币供应的宽口径指标。通常 M2 增速 >15% 说明资金充裕，<8% 说明资金收紧，极端情况下会传导至 CPI。")
+    st.caption("💡 M2 增速是货币供应的宽口径指标。通常 M2 增速 >15% 说明资金充裕，<8% 说明资金收紧。")
     if m2_forecast_text: st.info(m2_forecast_text)
 
 
-# ==================== PMI 景气度 (加入预测与悬浮说明) ====================
+# ==================== PMI 景气度 ====================
 st.subheader("🏭 PMI（采购经理指数）景气度监测")
 pmi_options = [col for col in pmi_df.columns if col != '月份']
 selected_pmi = st.selectbox("选择 PMI 分类指标：", pmi_options)
@@ -172,16 +171,17 @@ pmi_forecast_text = ""
 pmi_forecast_df = pd.DataFrame()
 if len(pmi_data) >= 6:
     try:
-        pmi_model = ExponentialSmoothing(pmi_data[selected_pmi], trend='add', seasonal=None).fit()
+        # 主动去空值，防止模型崩塌
+        clean_pmi = pmi_data[selected_pmi].dropna()
+        pmi_model = ExponentialSmoothing(clean_pmi, trend='add', seasonal=None).fit()
         pmi_forecast_vals = pmi_model.forecast(3)
         pmi_last_date = pmi_data['月份'].iloc[-1]
         pmi_future_dates = pd.date_range(start=pmi_last_date + pd.DateOffset(months=1), periods=3, freq='MS')
         pmi_forecast_df = pd.DataFrame({'月份': pmi_future_dates, '预测值': pmi_forecast_vals})
         pmi_forecast_text = f"💡 **PMI 趋势预估**：预计下个月 PMI 约为 **{pmi_forecast_vals[0]:.2f}**。"
     except:
-        pass
+        pmi_forecast_text = "⚠️ PMI 数据波动较大，无法进行准确的趋势预测。"
 
-# 构建 PMI 图表
 fig_pmi = go.Figure()
 fig_pmi.add_trace(go.Scatter(
     x=pmi_data['月份'], y=pmi_data[selected_pmi],
@@ -199,7 +199,6 @@ if not pmi_forecast_df.empty:
 
 fig_pmi.add_hline(y=pmi_line, line_dash="dash", line_color="red", annotation_text=f"自定义荣枯线 {pmi_line}")
 fig_pmi.update_xaxes(tickformat="%Y年%m月", dtick="M12")
-# 🔥 核心修改：放大字体
 fig_pmi.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
 st.plotly_chart(fig_pmi, use_container_width=True)
 if pmi_forecast_text: st.info(pmi_forecast_text)
