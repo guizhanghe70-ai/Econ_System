@@ -1,9 +1,4 @@
-      - name: 安装推送报告所需依赖
-        run: pip install requests
-        
-      - name: 发送经济运行日报邮件
-        env:
-          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
-          EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-        run: python send_report.py
+# 把这三行改掉，直接替换原本的 os.getenv 部分
+sender = "你的QQ号@qq.com"
+receiver = "你的接收邮箱@qq.com"
+password = "你的16位QQ邮箱授权码"
