@@ -12,8 +12,9 @@ except ImportError:
     HAS_STATSMODELS = False
 
 st.set_page_config(page_title="经济运行分析系统", layout="wide")
-st.title("📊 中国宏观双指标看板 (含企业与政策建议)")
+st.title("📊 中国宏观经济双指标看板 (全指标完全体)")
 
+# ==================== 数据加载 ====================
 try:
     cpi_df = pd.read_csv('cpi_data.csv')
     cpi_df['月份'] = cpi_df['月份'].astype(str).str.replace('年', '-').str.replace('月份', '')
@@ -34,17 +35,22 @@ try:
     m2_df['月份'] = m2_df['月份'].astype(str).str.replace('年', '-').str.replace('月份', '')
     m2_df['月份'] = pd.to_datetime(m2_df['月份'])
     m2_df = m2_df.sort_values('月份', ascending=True)
+    
+    # 新增 GDP 和 LPR
+    gdp_df = pd.read_csv('gdp_data.csv')
+    lpr_df = pd.read_csv('lpr_data.csv')
+    lpr_df['日期'] = pd.to_datetime(lpr_df['日期'])
+    lpr_df = lpr_df.sort_values('日期', ascending=True)
 
 except FileNotFoundError as e:
-    st.error(f"❌ 找不到数据文件！请确保运行了相关抓取脚本。\n错误：{e}")
+    st.error(f"❌ 找不到数据文件！请确保运行了所有抓取脚本。\n错误：{e}")
     st.stop()
 
-# ==================== 【升级】预警面板（加入M2选项） ====================
+# ==================== 预警面板 ====================
 st.sidebar.header("🔧 预警面板")
 cpi_warning_high = st.sidebar.number_input("CPI 通胀警戒线", value=103.0, step=0.1)
 cpi_warning_low = st.sidebar.number_input("CPI 通缩警戒线", value=99.0, step=0.1)
 pmi_line = st.sidebar.number_input("PMI 荣枯线", value=50.0, step=0.1)
-# 新增的 M2 预警
 m2_warning_high = st.sidebar.number_input("M2 宽松警戒线 (高于此值)", value=15.0, step=0.5)
 m2_warning_low = st.sidebar.number_input("M2 紧缩警戒线 (低于此值)", value=8.0, step=0.5)
 
@@ -57,7 +63,7 @@ elif cpi_val < cpi_warning_low:
 else:
     st.success(f"✅ 当前 CPI 为 {cpi_val}，平稳区间。")
 
-# ==================== 核心：预测及AI影响建议 ====================
+# ==================== 核心预测 ====================
 def safe_forecast(series, steps=3):
     if len(series) < 3: return None, "数据不足"
     forecast_vals = None
@@ -82,75 +88,6 @@ def safe_forecast(series, steps=3):
         except:
             return None, "预测失败"
     return forecast_vals, method_used
-
-# 🟢【核心升级】：为企业直接提供决策建议
-def get_forecast_description(name, val):
-    desc = f"**📊 指标分析**：{name} 预计下月预测值为 **{val:.2f}**。\n\n"
-    
-    if "CPI" in name:
-        if val > cpi_warning_high:
-            desc += f"**📈 宏观判断**：突破 {cpi_warning_high} 警戒线，进入较高通胀压力区间。\n"
-            desc += "**⚡ 核心影响**：消费者购买力被稀释，日常消费成本上升。\n"
-            desc += "**🎯 政策建议**：国家层面应**适度收紧货币政策**，防范经济过热。\n"
-            desc += "**🏢 企业对策**：可**适当提前锁定原材料成本**，但需警惕终端消费者购买力下降影响销量。"
-        elif val < cpi_warning_low:
-            desc += f"**📉 宏观判断**：跌破 {cpi_warning_low} 警戒线，进入通缩风险区间。\n"
-            desc += "**⚡ 核心影响**：企业利润承压，居民倾向于储蓄而非消费。\n"
-            desc += "**🎯 政策建议**：国家应**降准降息，加大民生与基建投资**，刺激总需求。\n"
-            desc += "**🏢 企业对策**：企业应**主动降价去库存，以价换量**；暂停非必要的扩产投资，储备现金流。"
-        else:
-            desc += f"**✅ 宏观判断**：处于 {cpi_warning_low}~{cpi_warning_high} 的温和通胀区间。\n"
-            desc += "**⚡ 核心影响**：物价平稳，有助于企业正常经营和居民稳步消费。\n"
-            desc += "**🎯 政策建议**：国家应**保持货币政策稳健**，维持当前投资节奏。\n"
-            desc += "**🏢 企业对策**：企业应**维持正常生产与供销节奏**，避免冒进。"
-            
-    elif "PPI" in name:
-        if val > 103:
-            desc += "**📈 宏观判断**：工业品出厂价格偏高，上游原材料成本压力大。\n"
-            desc += "**⚡ 核心影响**：下游制造业利润空间被严重挤压。\n"
-            desc += "**🎯 政策建议**：国家应**保供稳价**，投放战略物资储备。\n"
-            desc += "**🏢 企业对策**：中下游企业应**积极寻找替代原材料**，或与上游签订长单锁定价格。"
-        elif val < 97:
-            desc += "**📉 宏观判断**：工业品出厂价格偏低，工厂订单需求偏冷。\n"
-            desc += "**⚡ 核心影响**：工业产能利用率下降，工业通缩迹象明显。\n"
-            desc += "**🎯 政策建议**：国家应**加大新基建投资**，拉动工业品需求。\n"
-            desc += "**🏢 企业对策**：企业应**谨慎接单，避免产能过剩**；优化自身产能结构。"
-        else:
-            desc += "**✅ 宏观判断**：工业品价格处于正常波动区间。\n"
-            desc += "**⚡ 核心影响**：上下游价格传导平稳，企业成本可控。\n"
-            desc += "**🎯 政策建议**：保持现有产业扶持政策。\n"
-            desc += "**🏢 企业对策**：企业可按现有的采购和销售计划稳定经营。"
-            
-    elif "M2" in name:
-        # 🟢【核心升级】：这里使用了你在侧边栏设置的 M2 警戒线
-        if val > m2_warning_high:
-            desc += f"**🚀 宏观判断**：突破 {m2_warning_high}% 警戒线，市场流动性非常宽松。\n"
-            desc += "**⚡ 核心影响**：容易催生资产价格泡沫，推高资产价格（如核心城市房价、大宗商品）。\n"
-            desc += "**🎯 政策建议**：国家应**防范资产泡沫，控制宏观杠杆率**，货币政策应转向“收紧流动性”。\n"
-            desc += "**🏢 企业对策**：有融资需求的企业**应抓紧时机利用低成本资金**进行技术升级或扩张；但需警惕资金流向高风险资产。"
-        elif val < m2_warning_low:
-            desc += f"**💧 宏观判断**：跌破 {m2_warning_low}% 警戒线，市场流动性偏紧缩。\n"
-            desc += "**⚡ 核心影响**：企业融资成本上升，实体经济可能面临“缺血”和融资难的问题。\n"
-            desc += "**🎯 政策建议**：国家应**降准降息，加大信贷投放，释放流动性**。\n"
-            desc += "**🏢 企业对策**：企业应**控制有息负债，加速应收账款周转**，确保手上有充裕现金流。"
-        else:
-            desc += f"**✅ 宏观判断**：处于 {m2_warning_low}%~{m2_warning_high}% 的合理充裕区间。\n"
-            desc += "**⚡ 核心影响**：宏观资金面平稳，企业信贷条件适中。\n"
-            desc += "**🎯 政策建议**：国家应**实行精准滴灌**，支持中小微企业。\n"
-            desc += "**🏢 企业对策**：可**适度进行债务扩张**，维持稳健的财务杠杆。"
-            
-    elif "PMI" in name:
-        if val > pmi_line:
-            desc += f"**✅ 宏观判断**：高于 {pmi_line} 荣枯线，制造业呈扩张态势。\n"
-            desc += "**⚡ 核心影响**：订单增长，企业产能利用率提升。\n"
-            desc += "**🎯 政策建议**：国家应**依靠市场自发动力**，投资重点向科技创新倾斜。\n"
-            desc += "**🏢 企业对策**：企业应**加大采购和备产力度，适当增加招工**，积极抢占市场份额。"
-        else:
-            desc += f"**⚠️ 宏观判断**：低于 {pmi_line} 荣枯线，处于收缩区间。\n"
-            desc += "**⚡ 核心影响**：制造业订单减少，行业普遍承压。\n"
-            desc += "**🎯 政策建议**：国家应**加大逆周期调节力度，加快发行专项债**。\n"
-            desc += "**🏢 企业对策**：企业应**主动削减非核心开支，清理积压库存**；以“保现金、保生存”为第一要务。"
-    return desc
 
 def get_status(val, high, low):
     if val > high: return "⚠️ 存在通胀压力"
@@ -181,7 +118,6 @@ fig_ma.add_trace(go.Scatter(x=data['月份'], y=data[col_name], mode='lines+mark
 fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['3个月移动均线'], mode='lines', name='3个月移动均线'))
 fig_ma.add_trace(go.Scatter(x=data['月份'], y=data['6个月移动均线'], mode='lines', name='6个月移动均线'))
 
-# 预测执行
 last_date = data['月份'].iloc[-1]
 forecast_vals, pred_method = safe_forecast(data[col_name])
 forecast_text = ""
@@ -193,8 +129,7 @@ if forecast_vals is not None:
     fig_ma.add_trace(go.Scatter(x=forecast_df['月份'], y=forecast_df['预测值'], mode='lines+markers', name='未来3个月预测趋势',
         line=dict(dash='dash', color='red'), marker=dict(color='red'), text=forecast_df['预测状态'],
         hovertemplate="预测月份: %{x|%Y年%m月}<br>预测数值: %{y:.2f}<br><b>📌 预测情况: %{text}</b><extra>预测</extra>"))
-    
-    forecast_text = f"💡 **{data_type} {pred_method}**:\n\n{get_forecast_description(data_type, forecast_vals[0])}"
+    forecast_text = f"💡 **{data_type} {pred_method}**：预计下月数值约为 **{forecast_vals[0]:.2f}**。"
 
 fig_ma.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
 fig_ma.update_xaxes(tickformat="%Y年%m月", dtick="M12")
@@ -208,7 +143,6 @@ m2_cols = [col for col in m2_df.columns if '同比' in col]
 if m2_cols:
     selected_m2 = m2_cols[0]
     
-    # 🟢【核心升级】：M2 状态判断使用了侧边栏自定义的阈值
     def get_m2_status(val):
         if val > m2_warning_high: return f"🔵 货币偏宽松 (突破 {m2_warning_high}%)"
         elif val < m2_warning_low: return f"🔴 货币偏紧缩 (跌破 {m2_warning_low}%)"
@@ -233,9 +167,7 @@ if m2_cols:
     fig_m2.update_xaxes(tickformat="%Y年%m月", dtick="M12")
     fig_m2.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
     st.plotly_chart(fig_m2, use_container_width=True)
-    
-    if m2_vals is not None:
-        st.info(f"💡 **M2 {m2_method}**:\n\n{get_forecast_description('M2', m2_vals[0])}")
+    if m2_vals is not None: st.info(f"💡 **M2 {m2_method}**：预计下月同比增长约为 **{m2_vals[0]:.2f}%**。")
 
 
 # ==================== PMI 图表 ====================
@@ -271,22 +203,44 @@ fig_pmi.add_hline(y=pmi_line, line_dash="dash", line_color="red", annotation_tex
 fig_pmi.update_xaxes(tickformat="%Y年%m月", dtick="M12")
 fig_pmi.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
 st.plotly_chart(fig_pmi, use_container_width=True)
-
-if pmi_vals is not None:
-    st.info(f"💡 **PMI {pmi_method}**:\n\n{get_forecast_description('PMI', pmi_vals[0])}")
+if pmi_vals is not None: st.info(f"💡 **PMI {pmi_method}**：预计下月 PMI 约为 **{pmi_vals[0]:.2f}**。")
 
 
-# ==================== 导出与数据表 ====================
+# ==================== 新增 GDP 图表 ====================
+st.subheader("🏛️ GDP (国内生产总值) 季度增速监测")
+try:
+    gdp_df['季度'] = gdp_df['季度'].astype(str).str.replace('年', '年').str.replace('季度', '季度')
+    fig_gdp = px.bar(gdp_df.tail(12), x='季度', y='国内生产总值-同比增长', 
+                     title='最近 12 个季度 GDP 同比增速 (%)',
+                     text='国内生产总值-同比增长')
+    fig_gdp.update_xaxes(tickangle=45)
+    fig_gdp.update_layout(font=dict(size=14))
+    st.plotly_chart(fig_gdp, use_container_width=True)
+    latest_gdp = gdp_df.iloc[-1]
+    st.info(f"📌 **最新 GDP 数据**：最新季度 GDP 同比增长 **{latest_gdp['国内生产总值-同比增长']}%**。")
+except:
+    st.warning("⚠️ GDP 数据格式读取异常，请检查 gdp_data.csv。")
+
+
+# ==================== 新增 LPR 图表 ====================
+st.subheader("🏦 LPR (贷款市场报价利率) 走势监测")
+try:
+    fig_lpr = go.Figure()
+    fig_lpr.add_trace(go.Scatter(x=lpr_df['日期'], y=lpr_df['1年期'], mode='lines+markers', name='1年期 LPR (企业贷款基准)'))
+    fig_lpr.add_trace(go.Scatter(x=lpr_df['日期'], y=lpr_df['5年期'], mode='lines+markers', name='5年期以上 LPR (房贷基准)'))
+    fig_lpr.update_xaxes(tickformat="%Y年%m月", dtick="M12")
+    fig_lpr.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
+    st.plotly_chart(fig_lpr, use_container_width=True)
+    latest_lpr = lpr_df.iloc[-1]
+    st.info(f"📌 **最新 LPR**：1年期 **{latest_lpr['1年期']}%**，5年期以上 **{latest_lpr['5年期']}%**。")
+except:
+    st.warning("⚠️ LPR 数据读取异常，请检查 lpr_data.csv。")
+
+
+# ==================== 导出功能 ====================
 st.subheader("📥 数据导出")
 col1, col2 = st.columns(2)
 with col1:
     st.download_button("📥 下载 CPI 数据 (CSV)", cpi_df.to_csv(index=False).encode('utf-8-sig'), "cpi_data.csv", "text/csv")
 with col2:
     st.download_button("📥 下载 PMI 数据 (CSV)", pmi_df.to_csv(index=False).encode('utf-8-sig'), "pmi_data.csv", "text/csv")
-
-with st.expander("📋 原始数据表"):
-    col1, col2, col3, col4 = st.columns(4)
-    with col1: st.write("CPI"); st.dataframe(cpi_df)
-    with col2: st.write("PPI"); st.dataframe(ppi_df)
-    with col3: st.write("PMI"); st.dataframe(pmi_df)
-    with col4: st.write("M2"); st.dataframe(m2_df)
