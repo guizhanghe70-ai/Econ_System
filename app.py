@@ -12,7 +12,7 @@ except ImportError:
     HAS_STATSMODELS = False
 
 st.set_page_config(page_title="经济运行分析系统", layout="wide")
-st.title("📊 中国宏观经济双指标看板 (全指标完全体)")
+st.title("📊 中国宏观经济双指标看板 (全指标预警完整版)")
 
 # ==================== 数据加载 ====================
 try:
@@ -36,10 +36,15 @@ try:
     m2_df['月份'] = pd.to_datetime(m2_df['月份'])
     m2_df = m2_df.sort_values('月份', ascending=True)
     
-    # 新增 GDP 和 LPR
+    # 读取 GDP
     gdp_df = pd.read_csv('gdp_data.csv')
+
+    # 读取并修复 LPR
     lpr_df = pd.read_csv('lpr_data.csv')
+    lpr_df.rename(columns={'TRADE_DATE': '日期', 'LPR1Y': '1年期', 'LPR5Y': '5年期'}, inplace=True)
     lpr_df['日期'] = pd.to_datetime(lpr_df['日期'])
+    lpr_df['1年期'] = pd.to_numeric(lpr_df['1年期'], errors='coerce')
+    lpr_df['5年期'] = pd.to_numeric(lpr_df['5年期'], errors='coerce')
     lpr_df = lpr_df.sort_values('日期', ascending=True)
 
 except FileNotFoundError as e:
@@ -206,23 +211,43 @@ st.plotly_chart(fig_pmi, use_container_width=True)
 if pmi_vals is not None: st.info(f"💡 **PMI {pmi_method}**：预计下月 PMI 约为 **{pmi_vals[0]:.2f}**。")
 
 
-# ==================== 新增 GDP 图表 ====================
+# ==================== GDP 图表（修复排序与读取） ====================
 st.subheader("🏛️ GDP (国内生产总值) 季度增速监测")
 try:
-    gdp_df['季度'] = gdp_df['季度'].astype(str).str.replace('年', '年').str.replace('季度', '季度')
-    fig_gdp = px.bar(gdp_df.tail(12), x='季度', y='国内生产总值-同比增长', 
+    gdp_df['季度'] = gdp_df['季度'].astype(str)
+    # 🟢【核心修复】：按时间倒序排序，确保最新数据在第一行
+    gdp_df = gdp_df.sort_values('季度', ascending=False) 
+    
+    fig_gdp = px.bar(gdp_df.head(12), x='季度', y='国内生产总值-同比增长', 
                      title='最近 12 个季度 GDP 同比增速 (%)',
                      text='国内生产总值-同比增长')
     fig_gdp.update_xaxes(tickangle=45)
     fig_gdp.update_layout(font=dict(size=14))
     st.plotly_chart(fig_gdp, use_container_width=True)
-    latest_gdp = gdp_df.iloc[-1]
-    st.info(f"📌 **最新 GDP 数据**：最新季度 GDP 同比增长 **{latest_gdp['国内生产总值-同比增长']}%**。")
-except:
+    
+    # 🟢【核心修复】：取第一行（最新的数据）
+    latest_gdp_val = gdp_df.iloc[0]['国内生产总值-同比增长']
+    
+    if latest_gdp_val > 6.0:
+        status_msg = "🚀 **宏观热度过高，存在经济过热风险**"
+        advice_msg = "**影响**：经济增速远超潜在产出，通常伴随资产价格快速上涨和通胀压力。**宏观预测**：国家层面大概率将面临**收紧货币政策**的压力（如上调存款准备金率或加息）。**企业建议**：需警惕政策降温带来的行业冲击，短期应避免盲目举债扩张。"
+    elif latest_gdp_val > 4.5:
+        status_msg = "✅ **经济运行稳健，符合市场预期**"
+        advice_msg = "**影响**：增速处于合理区间，经济稳中向好。**宏观预测**：国家将保持积极财政与稳健货币政策。**企业建议**：可适度扩大再生产，加大研发投入抢占市场。"
+    elif latest_gdp_val > 3.0:
+        status_msg = "⚠️ **经济增速放缓，内需略显不足**"
+        advice_msg = "**影响**：增速逼近目标下限，有通缩预期。**宏观预测**：国家可能启动**降息降准**，加大基建投资来托底。**企业建议**：应严格控制有息负债，保障现金流安全，减少非必要资本开支。"
+    else:
+        status_msg = "🚨 **经济严重失速，步入衰退边缘**"
+        advice_msg = "**影响**：就业压力剧增，企业利润大幅下滑。**宏观预测**：国家急需出台超常规的**大规模经济刺激计划**。**企业建议**：采取极度收缩战略，保全现金，等待政策转向。"
+        
+    st.info(f"📌 **最新 GDP 数据**：最新季度（上半年）GDP 同比增长 **{latest_gdp_val}%**。\n\n**📈 宏观判断**：{status_msg}\n\n**⚡ 核心影响**：{advice_msg}")
+
+except Exception as e:
     st.warning("⚠️ GDP 数据格式读取异常，请检查 gdp_data.csv。")
 
 
-# ==================== 新增 LPR 图表 ====================
+# ==================== LPR 图表 ====================
 st.subheader("🏦 LPR (贷款市场报价利率) 走势监测")
 try:
     fig_lpr = go.Figure()
@@ -231,8 +256,20 @@ try:
     fig_lpr.update_xaxes(tickformat="%Y年%m月", dtick="M12")
     fig_lpr.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
     st.plotly_chart(fig_lpr, use_container_width=True)
-    latest_lpr = lpr_df.iloc[-1]
-    st.info(f"📌 **最新 LPR**：1年期 **{latest_lpr['1年期']}%**，5年期以上 **{latest_lpr['5年期']}%**。")
+    
+    # 🟢【LPR 预警与建议】
+    latest_lpr_1y = lpr_df.iloc[-1]['1年期']
+    latest_lpr_5y = lpr_df.iloc[-1]['5年期']
+    
+    if latest_lpr_5y > 4.2:
+        lpr_msg = f"🔴 **房贷利率偏高，处于收紧周期**\n\n**影响**：{latest_lpr_5y}% 的 5年期 LPR 处于历史偏高水平，购房成本较高，会严重抑制房地产市场成交，对房地产及其上下游产业链造成较大压力。\n\n**宏观预测**：国家现阶段大概率偏向**防范资产泡沫**，短期内**降息概率较低**。\n\n**企业建议**：房地产及重资产企业需警惕融资成本高企，加快去库存节奏，避免高息拿地。"
+    elif latest_lpr_5y < 3.7:
+        lpr_msg = f"🟢 **房贷利率处于历史低位，宽松周期**\n\n**影响**：{latest_lpr_5y}% 的 5年期 LPR 处于极低水平，购房按揭成本大幅降低，有助于提振房地产成交，稳定楼市。\n\n**宏观预测**：国家正在**刺激信贷和楼市复苏**，当前处于降息降准的宽松通道中。\n\n**企业建议**：有购房刚需者可考虑入场；有融资需求的企业应抓住当前的**低成本信贷窗口期**，置换掉过去的高息贷款。"
+    else:
+        lpr_msg = f"✅ **利率水平适中，政策处于观察期**\n\n**影响**：{latest_lpr_5y}% 的 5年期 LPR 处于合理区间，房贷成本适中。\n\n**宏观预测**：国家短期内**大概率保持利率不变**，货币政策以稳健为主。\n\n**企业建议**：企业可按现有节奏安排融资计划，无需急于操作。"
+        
+    st.info(f"📌 **最新 LPR**：1年期 **{latest_lpr_1y}%**，5年期以上 **{latest_lpr_5y}%**。\n\n{lpr_msg}")
+
 except:
     st.warning("⚠️ LPR 数据读取异常，请检查 lpr_data.csv。")
 
