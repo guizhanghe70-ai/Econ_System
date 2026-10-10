@@ -12,7 +12,7 @@ except ImportError:
     HAS_STATSMODELS = False
 
 st.set_page_config(page_title="经济运行分析系统", layout="wide")
-st.title("📊 中国宏观经济双指标看板 (全指标预警完整版)")
+st.title("📊 中国宏观经济双指标看板 (含内循环监测)")
 
 # ==================== 数据加载 ====================
 try:
@@ -36,10 +36,8 @@ try:
     m2_df['月份'] = pd.to_datetime(m2_df['月份'])
     m2_df = m2_df.sort_values('月份', ascending=True)
     
-    # 读取 GDP
     gdp_df = pd.read_csv('gdp_data.csv')
 
-    # 读取并修复 LPR
     lpr_df = pd.read_csv('lpr_data.csv')
     lpr_df.rename(columns={'TRADE_DATE': '日期', 'LPR1Y': '1年期', 'LPR5Y': '5年期'}, inplace=True)
     lpr_df['日期'] = pd.to_datetime(lpr_df['日期'])
@@ -47,8 +45,11 @@ try:
     lpr_df['5年期'] = pd.to_numeric(lpr_df['5年期'], errors='coerce')
     lpr_df = lpr_df.sort_values('日期', ascending=True)
 
+    # 🟢 读取内循环模拟数据
+    internal_df = pd.read_csv("internal_circulation_data.csv")
+
 except FileNotFoundError as e:
-    st.error(f"❌ 找不到数据文件！请确保运行了所有抓取脚本。\n错误：{e}")
+    st.error(f"❌ 找不到数据文件！请确保运行了所有抓取/生成脚本。\n错误：{e}")
     st.stop()
 
 # ==================== 预警面板 ====================
@@ -211,11 +212,10 @@ st.plotly_chart(fig_pmi, use_container_width=True)
 if pmi_vals is not None: st.info(f"💡 **PMI {pmi_method}**：预计下月 PMI 约为 **{pmi_vals[0]:.2f}**。")
 
 
-# ==================== GDP 图表（修复排序与读取） ====================
+# ==================== GDP 图表 ====================
 st.subheader("🏛️ GDP (国内生产总值) 季度增速监测")
 try:
     gdp_df['季度'] = gdp_df['季度'].astype(str)
-    # 🟢【核心修复】：按时间倒序排序，确保最新数据在第一行
     gdp_df = gdp_df.sort_values('季度', ascending=False) 
     
     fig_gdp = px.bar(gdp_df.head(12), x='季度', y='国内生产总值-同比增长', 
@@ -225,9 +225,7 @@ try:
     fig_gdp.update_layout(font=dict(size=14))
     st.plotly_chart(fig_gdp, use_container_width=True)
     
-    # 🟢【核心修复】：取第一行（最新的数据）
     latest_gdp_val = gdp_df.iloc[0]['国内生产总值-同比增长']
-    
     if latest_gdp_val > 6.0:
         status_msg = "🚀 **宏观热度过高，存在经济过热风险**"
         advice_msg = "**影响**：经济增速远超潜在产出，通常伴随资产价格快速上涨和通胀压力。**宏观预测**：国家层面大概率将面临**收紧货币政策**的压力（如上调存款准备金率或加息）。**企业建议**：需警惕政策降温带来的行业冲击，短期应避免盲目举债扩张。"
@@ -242,7 +240,6 @@ try:
         advice_msg = "**影响**：就业压力剧增，企业利润大幅下滑。**宏观预测**：国家急需出台超常规的**大规模经济刺激计划**。**企业建议**：采取极度收缩战略，保全现金，等待政策转向。"
         
     st.info(f"📌 **最新 GDP 数据**：最新季度（上半年）GDP 同比增长 **{latest_gdp_val}%**。\n\n**📈 宏观判断**：{status_msg}\n\n**⚡ 核心影响**：{advice_msg}")
-
 except Exception as e:
     st.warning("⚠️ GDP 数据格式读取异常，请检查 gdp_data.csv。")
 
@@ -257,7 +254,6 @@ try:
     fig_lpr.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
     st.plotly_chart(fig_lpr, use_container_width=True)
     
-    # 🟢【LPR 预警与建议】
     latest_lpr_1y = lpr_df.iloc[-1]['1年期']
     latest_lpr_5y = lpr_df.iloc[-1]['5年期']
     
@@ -269,9 +265,63 @@ try:
         lpr_msg = f"✅ **利率水平适中，政策处于观察期**\n\n**影响**：{latest_lpr_5y}% 的 5年期 LPR 处于合理区间，房贷成本适中。\n\n**宏观预测**：国家短期内**大概率保持利率不变**，货币政策以稳健为主。\n\n**企业建议**：企业可按现有节奏安排融资计划，无需急于操作。"
         
     st.info(f"📌 **最新 LPR**：1年期 **{latest_lpr_1y}%**，5年期以上 **{latest_lpr_5y}%**。\n\n{lpr_msg}")
-
 except:
     st.warning("⚠️ LPR 数据读取异常，请检查 lpr_data.csv。")
+
+
+# ==================== 新增“内循环”监测看板 ====================
+st.subheader("🔄 内循环景气度监测 (消费 vs 投资)")
+try:
+    # 为消费和投资加上智能状态判定
+    internal_df['消费状态'] = internal_df['社会消费品零售增速'].apply(
+        lambda x: "✅ 消费稳健" if x >= 3 else ("⚠️ 消费走弱" if x >= 0 else "🔴 消费萎缩")
+    )
+    internal_df['投资状态'] = internal_df['固定资产投资增速'].apply(
+        lambda x: "✅ 投资扩张" if x >= 5 else ("⚠️ 投资放缓" if x >= 2 else "🔴 投资停滞")
+    )
+
+    fig_internal = go.Figure()
+    
+    # 消费端曲线（带状态）
+    fig_internal.add_trace(go.Scatter(
+        x=internal_df['月份'], y=internal_df['社会消费品零售增速'],
+        mode='lines+markers', name='社零增速 (老百姓花钱)',
+        text=internal_df['消费状态'],
+        hovertemplate="月份: %{x}<br>增速: %{y:.2f}%<br><b>📌 状态: %{text}</b><extra></extra>"
+    ))
+    
+    # 投资端曲线（带状态）
+    fig_internal.add_trace(go.Scatter(
+        x=internal_df['月份'], y=internal_df['固定资产投资增速'],
+        mode='lines+markers', name='固投增速 (企业扩产)',
+        text=internal_df['投资状态'],
+        hovertemplate="月份: %{x}<br>增速: %{y:.2f}%<br><b>📌 状态: %{text}</b><extra></extra>"
+    ))
+    
+    fig_internal.update_layout(
+        title="内循环关键指标走势",
+        xaxis=dict(tickangle=45),
+        font=dict(size=14), hoverlabel=dict(font_size=15)
+    )
+    st.plotly_chart(fig_internal, use_container_width=True)
+    
+    latest_retail = internal_df.iloc[-1]['社会消费品零售增速']
+    latest_invest = internal_df.iloc[-1]['固定资产投资增速']
+    
+    if latest_retail < 1.0:
+        retail_msg = f"**消费端**：增速仅 {latest_retail}%，老百姓在明显压缩消费，防御性储蓄意愿强，内需不足是核心问题。"
+    else:
+        retail_msg = f"**消费端**：增速 {latest_retail}%，消费虽有韧性，但仍未完全复苏。"
+        
+    if latest_invest < 1.5:
+        invest_msg = f"**投资端**：增速仅 {latest_invest}%，企业在极度谨慎，不敢扩产，这表明企业家对未来的预期仍然偏弱。"
+    else:
+        invest_msg = f"**投资端**：增速 {latest_invest}%，投资意愿正在低位企稳。"
+        
+    st.info(f"📌 **最新内循环快照**：\n\n{retail_msg}\n\n{invest_msg}\n\n（注：这两项指标持续低迷，正是内循环不畅的真实写照。）")
+
+except Exception as e:
+    st.warning("⚠️ 没有找到内循环模拟数据，请确保先运行 `python generate_internal_data.py` 生成了数据。")
 
 
 # ==================== 导出功能 ====================
