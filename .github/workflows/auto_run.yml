@@ -18,7 +18,7 @@ jobs:
           python-version: '3.10'
 
       - name: 安装依赖
-        run: pip install requests pandas akshare
+        run: pip install requests pandas akshare streamlit lxml beautifulsoup4 openpyxl
 
       - name: 运行推送脚本
         env:
