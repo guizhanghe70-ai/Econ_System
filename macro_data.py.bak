@@ -1,0 +1,373 @@
+# coding: utf-8
+"""
+中国宏观数据自动抓取模块（含货币流通速度 + M1数据）
+"""
+import streamlit as st
+import re
+from datetime import datetime
+
+CACHE_TTL = 86400
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def fetch_all_macro():
+    result = {
+        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "success": [],
+        "failed": [],
+        "data": {},
+    }
+
+    try:
+        import akshare as ak
+    except ImportError:
+        result["error"] = "未安装 akshare"
+        return result
+
+    def safe_get(func_name, **kwargs):
+        try:
+            func = getattr(ak, func_name)
+            return func(**kwargs)
+        except Exception:
+            return None
+
+    def to_float(v):
+        try:
+            return float(str(v).replace(",", "").replace("%", "").strip())
+        except Exception:
+            return None
+
+    def parse_date_key(s):
+        s = str(s)
+        nums = re.findall(r'\d+', s)
+        if not nums:
+            return 0
+        if len(nums[0]) >= 6:
+            return int(nums[0][:6])
+        if len(nums) >= 2:
+            try:
+                return int(nums[0]) * 100 + int(nums[1])
+            except Exception:
+                return int(nums[0]) * 100
+        return int(nums[0]) * 100
+
+    def pick_latest(df, val_col, date_col):
+        try:
+            df2 = df.copy()
+            df2["_k"] = df2[date_col].apply(parse_date_key)
+            df2 = df2.dropna(subset=[val_col, "_k"])
+            if len(df2) == 0:
+                return None
+            df2 = df2.sort_values("_k")
+            return df2.iloc[-1]
+        except Exception:
+            return None
+
+    def extract(func_name, val_col, date_col, transform=None):
+        try:
+            df = safe_get(func_name)
+            if df is None or len(df) == 0:
+                return None
+            if val_col not in df.columns or date_col not in df.columns:
+                return None
+            latest = pick_latest(df, val_col, date_col)
+            if latest is None:
+                return None
+            val = to_float(latest[val_col])
+            if transform:
+                val = transform(val)
+            return {
+                "value": val,
+                "date": str(latest[date_col]),
+            }
+        except Exception:
+            return None
+
+    # CPI
+    r = extract("macro_china_cpi_monthly", "今值", "日期")
+    if r:
+        r["is_monthly"] = True
+        result["data"]["cpi"] = r
+        result["success"].append("CPI")
+    else:
+        result["failed"].append("CPI")
+
+    # CPI 同比（用于剪刀差）
+    try:
+        df_cpi_yoy = safe_get("macro_china_cpi")
+        if df_cpi_yoy is not None and len(df_cpi_yoy) > 0:
+            yoy_col = None
+            for col in df_cpi_yoy.columns:
+                if "全国" in str(col) and "同比" in str(col):
+                    yoy_col = col
+                    break
+            date_col = "月份" if "月份" in df_cpi_yoy.columns else df_cpi_yoy.columns[0]
+            if yoy_col:
+                latest = pick_latest(df_cpi_yoy, yoy_col, date_col)
+                if latest is not None:
+                    result["data"]["cpi_yoy"] = {
+                        "value": to_float(latest[yoy_col]),
+                        "date": str(latest[date_col]),
+                    }
+                    result["success"].append("CPI同比")
+    except Exception:
+        pass
+
+    # PPI
+    r = extract("macro_china_ppi", "当月同比增长", "月份")
+    if r: result["data"]["ppi"] = r; result["success"].append("PPI")
+    else: result["failed"].append("PPI")
+
+    # PMI
+    r = extract("macro_china_pmi", "制造业-指数", "月份")
+    if r: result["data"]["pmi"] = r; result["success"].append("PMI")
+    else: result["failed"].append("PMI")
+
+    # GDP
+    r = extract("macro_china_gdp", "国内生产总值-绝对值", "季度")
+    if r: result["data"]["gdp"] = r; result["success"].append("GDP")
+    else: result["failed"].append("GDP")
+
+    # M2 同比
+    r = extract("macro_china_money_supply", "货币和准货币(M2)-同比增长", "月份")
+    if r: result["data"]["m2"] = r; result["success"].append("M2")
+    else: result["failed"].append("M2")
+
+    # M1 同比（用于剪刀差）
+    try:
+        df_m1 = safe_get("macro_china_money_supply")
+        if df_m1 is not None and len(df_m1) > 0:
+            m1_col = None
+            for col in df_m1.columns:
+                if "M1" in str(col) and "同比" in str(col):
+                    m1_col = col
+                    break
+            date_col = "月份" if "月份" in df_m1.columns else df_m1.columns[0]
+            if m1_col:
+                latest = pick_latest(df_m1, m1_col, date_col)
+                if latest is not None:
+                    result["data"]["m1"] = {
+                        "value": to_float(latest[m1_col]),
+                        "date": str(latest[date_col]),
+                    }
+                    result["success"].append("M1")
+    except Exception:
+        pass
+
+    # M2 余额
+    try:
+        df = safe_get("macro_china_money_supply")
+        if df is not None and len(df) > 0:
+            m2_qty_col = None
+            for col in df.columns:
+                cs = str(col)
+                if "M2" in cs and "数量" in cs:
+                    m2_qty_col = col
+                    break
+            date_col = "月份" if "月份" in df.columns else df.columns[0]
+            if m2_qty_col:
+                latest = pick_latest(df, m2_qty_col, date_col)
+                if latest is not None:
+                    result["data"]["m2_balance"] = {
+                        "value": to_float(latest[m2_qty_col]),
+                        "date": str(latest[date_col]),
+                    }
+    except Exception:
+        pass
+
+    # 货币流通速度 V
+    try:
+        gdp_v = result["data"].get("gdp", {}).get("value")
+        m2_bal = result["data"].get("m2_balance", {}).get("value")
+        if gdp_v and m2_bal and m2_bal > 0:
+            velocity = (gdp_v * 4) / m2_bal
+            result["data"]["velocity"] = {
+                "value": round(velocity, 3),
+                "date": result["data"].get("m2_balance", {}).get("date", ""),
+            }
+    except Exception:
+        pass
+
+    # 社融增量
+    try:
+        df = safe_get("macro_china_shrzgm")
+        if df is not None and len(df) > 0:
+            val_col = "社会融资规模增量" if "社会融资规模增量" in df.columns else None
+            date_col = "月份" if "月份" in df.columns else df.columns[0]
+            if val_col:
+                latest = pick_latest(df, val_col, date_col)
+                if latest is not None:
+                    result["data"]["shrzgm"] = {
+                        "value": to_float(latest[val_col]),
+                        "date": str(latest[date_col]),
+                    }
+                    result["success"].append("社融")
+                else:
+                    result["failed"].append("社融")
+            else:
+                result["failed"].append("社融")
+        else:
+            result["failed"].append("社融")
+    except Exception:
+        result["failed"].append("社融")
+
+    # 社融存量同比
+    try:
+        df_stock = safe_get("macro_china_shrzgm_stock")
+        if df_stock is not None and len(df_stock) > 0:
+            yoy_col = None
+            for col in df_stock.columns:
+                if "同比增长" in str(col) or "同比" in str(col):
+                    yoy_col = col
+                    break
+            date_col = "月份" if "月份" in df_stock.columns else df_stock.columns[0]
+            if yoy_col:
+                latest = pick_latest(df_stock, yoy_col, date_col)
+                if latest is not None:
+                    result["data"]["shrzgm_stock_yoy"] = {
+                        "value": to_float(latest[yoy_col]),
+                        "date": str(latest[date_col]),
+                    }
+                    result["success"].append("社融存量同比")
+    except Exception:
+        pass
+
+    # LPR
+    try:
+        df = safe_get("macro_china_lpr")
+        if df is not None and len(df) > 0:
+            lpr1y_col = None
+            lpr5y_col = None
+            for col in df.columns:
+                c = str(col).upper()
+                if "LPR1" in c or "1Y" in c:
+                    lpr1y_col = col
+                if "LPR5" in c or "5Y" in c:
+                    lpr5y_col = col
+            date_col = "TRADE_DATE" if "TRADE_DATE" in df.columns else df.columns[0]
+            if lpr1y_col:
+                latest = pick_latest(df, lpr1y_col, date_col)
+                if latest is not None:
+                    result["data"]["lpr"] = {
+                        "lpr1y": to_float(latest[lpr1y_col]),
+                        "lpr5y": to_float(latest[lpr5y_col]) if lpr5y_col else None,
+                        "date": str(latest[date_col]),
+                    }
+                    result["success"].append("LPR")
+                else:
+                    result["failed"].append("LPR")
+            else:
+                result["failed"].append("LPR")
+        else:
+            result["failed"].append("LPR")
+    except Exception:
+        result["failed"].append("LPR")
+
+    # 失业率
+    try:
+        df = safe_get("macro_china_urban_unemployment")
+        if df is not None and len(df) > 0:
+            df_filtered = df[df["item"] == "全国城镇调查失业率"]
+            if len(df_filtered) == 0:
+                df_filtered = df
+            latest = pick_latest(df_filtered, "value", "date")
+            if latest is not None:
+                result["data"]["unemployment"] = {
+                    "value": to_float(latest["value"]),
+                    "date": str(latest["date"]),
+                }
+                result["success"].append("失业率")
+            else:
+                result["failed"].append("失业率")
+        else:
+            result["failed"].append("失业率")
+    except Exception:
+        result["failed"].append("失业率")
+
+    # 汇率
+    try:
+        df = safe_get("currency_boc_sina", symbol="美元",
+                      start_date="20250101",
+                      end_date=datetime.now().strftime("%Y%m%d"))
+        if df is not None and len(df) > 0:
+            val = None
+            for col in df.columns:
+                if "中间价" in str(col) or "汇买价" in str(col) or "买入价" in str(col):
+                    v = to_float(df.iloc[-1][col])
+                    if v:
+                        val = v / 100 if v > 100 else v
+                        break
+            if val is None:
+                val = 7.1
+            date_col = "日期" if "日期" in df.columns else df.columns[0]
+            result["data"]["exchange"] = {
+                "value": val,
+                "date": str(df.iloc[-1][date_col]),
+            }
+            result["success"].append("汇率")
+        else:
+            result["failed"].append("汇率")
+    except Exception:
+        result["failed"].append("汇率")
+
+    # 社零
+    r = extract("macro_china_consumer_goods_retail", "同比增长", "月份")
+    if r: result["data"]["retail"] = r; result["success"].append("社零")
+    else: result["failed"].append("社零")
+
+    # 工业增加值
+    r = extract("macro_china_gyzjz", "同比增长", "月份")
+    if r: result["data"]["industrial"] = r; result["success"].append("工业增加值")
+    else: result["failed"].append("工业增加值")
+
+    # 进出口
+    try:
+        df = safe_get("macro_china_trade_balance")
+        if df is not None and len(df) > 0:
+            val_col = "今值" if "今值" in df.columns else None
+            date_col = "日期" if "日期" in df.columns else df.columns[0]
+            if val_col:
+                latest = pick_latest(df, val_col, date_col)
+                if latest is not None:
+                    result["data"]["trade"] = {
+                        "value": to_float(latest[val_col]),
+                        "date": str(latest[date_col]),
+                    }
+                    result["success"].append("进出口")
+                else:
+                    result["failed"].append("进出口")
+            else:
+                result["failed"].append("进出口")
+        else:
+            result["failed"].append("进出口")
+    except Exception:
+        result["failed"].append("进出口")
+
+    # 固投
+    r = extract("macro_china_gdzctz", "同比增长", "月份")
+    if r: result["data"]["investment"] = r; result["success"].append("固投")
+    else: result["failed"].append("固投")
+
+    return result
+
+
+def get_val(macro_result, key, field="value", fallback=None):
+    try:
+        v = macro_result["data"][key][field]
+        return v if v is not None else fallback
+    except Exception:
+        return fallback
+
+
+def get_date(macro_result, key, fallback="—"):
+    try:
+        d = macro_result["data"][key]["date"]
+        return d if d else fallback
+    except Exception:
+        return fallback
+
+
+def is_monthly(macro_result, key):
+    try:
+        return macro_result["data"][key].get("is_monthly", False)
+    except Exception:
+        return False

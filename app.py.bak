@@ -1,0 +1,1250 @@
+# coding: utf-8
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+import numpy as np
+from macro_data import fetch_all_macro, get_val, get_date, is_monthly
+
+# ==================== 0. 内置指标词典 ====================
+INDICATORS_DATA = {
+    "宏观经济学": [
+        {"名称": "CPI（居民消费价格指数）", "公式": "（当期一篮子商品价格 / 基期一篮子商品价格）× 100",
+         "大白话": "衡量老百姓日常买东西、服务是变贵了还是变便宜了。", "标准": "同比 2%~3% 为温和；>3% 通胀压力；<0% 通缩风险"},
+        {"名称": "PPI（工业生产者出厂价格指数）", "公式": "（当期出厂价 / 基期出厂价）× 100",
+         "大白话": "工厂卖货的价格涨跌，是 CPI 的先行指标。", "标准": "同比为正说明工业需求旺；持续为负说明需求疲软"},
+        {"名称": "PMI（采购经理指数）", "公式": "对采购经理问卷加权汇总得出",
+         "大白话": "企业对未来经济的信心投票。", "标准": "50 为荣枯线；>50 扩张；<50 收缩"},
+        {"名称": "GDP（国内生产总值）", "公式": "消费 + 投资 + 政府支出 + 净出口",
+         "大白话": "一个国家一年内新创造的全部财富。", "标准": "同比增速 5% 左右为健康"},
+        {"名称": "M2（广义货币供应量）", "公式": "M1 + 定期存款 + 储蓄存款",
+         "大白话": "市场上总共有多少钱在流动。", "标准": "同比 8%~10% 为合理；过高警惕通胀"},
+        {"名称": "LPR（贷款市场报价利率）", "公式": "由 20 家报价行报价后去掉最高最低取平均",
+         "大白话": "银行贷款的基准利率，影响房贷、企业贷。", "标准": "下调=宽松；上调=收紧"},
+        {"名称": "社会消费品零售总额", "公式": "各类消费品的零售额加总",
+         "大白话": "老百姓花了多少钱买东西，反映内需。", "标准": "同比增速与 GDP 增速匹配"},
+        {"名称": "固定资产投资", "公式": "基建 + 制造业 + 房地产投资",
+         "大白话": "国家、企业把钱投到建设上。", "标准": "增速高于 GDP 说明投资拉动强"},
+        {"名称": "货币流通速度", "公式": "V = GDP / M2（费雪方程式 MV = PY）",
+         "大白话": "1块钱在一年内转手买了几次东西。", "标准": "越高说明钱转得越快；中国长期趋势在下降"},
+        {"名称": "M2/GDP 比率", "公式": "M2余额 ÷ 年化GDP",
+         "大白话": "市场上有多少钱，对应多少经济产出。", "标准": "健康区间 0.7~1.0；中国 >2 说明货币超发严重"},
+    ],
+    "微观经济学": [
+        {"名称": "边际成本", "公式": "Δ总成本 / Δ产量", "大白话": "多生产一个产品，总共要多花多少钱。", "标准": "等于边际收入时利润最大"},
+        {"名称": "边际收益", "公式": "Δ总收入 / Δ销量", "大白话": "多卖一个产品，多赚多少钱。", "标准": "≥边际成本才值得生产"},
+        {"名称": "需求价格弹性", "公式": "%Δ需求量 / %Δ价格", "大白话": "价格一变，买的人变多少。", "标准": ">1 富有弹性；<1 缺乏弹性"},
+        {"名称": "利润最大化条件", "公式": "MR = MC", "大白话": "边际收益等于边际成本时，赚得最多。", "标准": "所有企业的黄金法则"},
+    ],
+    "财务管理": [
+        {"名称": "毛利率", "公式": "（营业收入 - 营业成本）/ 营业收入 × 100%", "大白话": "卖货赚的差价占收入的比例。", "标准": "行业差异大，广电行业约 30%~50%"},
+        {"名称": "净利率", "公式": "净利润 / 营业收入 × 100%", "大白话": "扣掉所有成本后，真正赚的比例。", "标准": "5% 以上算健康"},
+        {"名称": "ROE（净资产收益率）", "公式": "净利润 / 净资产 × 100%", "大白话": "股东投的钱一年能赚多少。", "标准": ">15% 为优秀"},
+        {"名称": "资产负债率", "公式": "总负债 / 总资产 × 100%", "大白话": "公司资产里有多少是借来的。", "标准": "40%~60% 为合理；>70% 偏高风险"},
+        {"名称": "流动比率", "公式": "流动资产 / 流动负债", "大白话": "短期还债能力。", "标准": ">2 为稳健；<1 有流动性风险"},
+        {"名称": "应收账款周转天数", "公式": "365 / 应收账款周转率", "大白话": "卖出去的钱平均多少天能收回来。", "标准": "越短越好；广电行业普遍偏长"},
+    ],
+    "投资学": [
+        {"名称": "NPV（净现值）", "公式": "Σ(未来现金流 / (1+r)^t) - 初始投资", "大白话": "项目未来赚的钱折算到今天，减去投入。", "标准": ">0 项目可行；<0 不值得投"},
+        {"名称": "IRR（内部收益率）", "公式": "使 NPV = 0 的贴现率", "大白话": "这个项目本身的年化收益率。", "标准": "> 公司资金成本才值得投"},
+        {"名称": "回收期", "公式": "累计现金流由负转正的年份", "大白话": "多久能把本金赚回来。", "标准": "越短越好"},
+        {"名称": "夏普比率", "公式": "(组合收益 - 无风险收益) / 组合标准差", "大白话": "每承担一份风险，能多赚多少。", "标准": ">1 为优秀"},
+    ],
+    "统计学": [
+        {"名称": "均值", "公式": "Σx / n", "大白话": "平均数", "标准": "受极端值影响"},
+        {"名称": "中位数", "公式": "排序后中间那个数", "大白话": "一半比它大，一半比它小", "标准": "比均值更抗极端值"},
+        {"名称": "标准差", "公式": "√(Σ(x-μ)² / n)", "大白话": "数据波动大小", "标准": "越大波动越大"},
+        {"名称": "相关系数", "公式": "Cov(X,Y) / (σx × σy)", "大白话": "两个变量一起变化的程度", "标准": "取值 -1 到 1；绝对值越大越相关"},
+    ],
+    "会计学": [
+        {"名称": "资产", "公式": "负债 + 所有者权益", "大白话": "公司拥有的东西", "标准": "会计恒等式"},
+        {"名称": "负债", "公式": "资产 - 所有者权益", "大白话": "公司欠别人的钱", "标准": "会计恒等式"},
+        {"名称": "权责发生制", "公式": "收入在赚取时确认，不论是否收款", "大白话": "签了合同就算收入", "标准": "与收付实现制相对"},
+        {"名称": "收付实现制", "公式": "收入在实际收到款时确认", "大白话": "钱到手才算收入", "标准": "现金流口径"},
+    ],
+    "金融市场": [
+        {"名称": "市盈率（PE）", "公式": "股价 / 每股收益", "大白话": "多少年能靠利润回本", "标准": "行业差异大"},
+        {"名称": "市净率（PB）", "公式": "股价 / 每股净资产", "大白话": "股价是净资产的几倍", "标准": "<1 可能被低估"},
+        {"名称": "无风险利率", "公式": "通常用国债收益率代表", "大白话": "几乎没风险能拿到的收益", "标准": "中国常用 10 年期国债"},
+        {"名称": "风险溢价", "公式": "预期收益 - 无风险利率", "大白话": "承担风险多拿的补偿", "标准": "股市通常 4%~6%"},
+    ],
+    "国际贸易": [
+        {"名称": "贸易顺差", "公式": "出口 - 进口", "大白话": "卖出去的比买进来的多", "标准": "顺差大本币有升值压力"},
+        {"名称": "贸易逆差", "公式": "进口 - 出口", "大白话": "买进来的比卖出去的多", "标准": "逆差大本币有贬值压力"},
+        {"名称": "汇率", "公式": "本币 / 外币", "大白话": "一块钱能换多少外币", "标准": "影响进出口竞争力"},
+    ],
+    "产业经济学": [
+        {"名称": "集中度（CR4）", "公式": "前 4 名企业市场份额之和", "大白话": "行业被几家巨头垄断的程度", "标准": ">60% 为寡头"},
+        {"名称": "赫芬达尔指数（HHI）", "公式": "Σ(各企业市场份额²)", "大白话": "行业竞争程度综合指标", "标准": "<1500 竞争；>2500 垄断"},
+        {"名称": "规模经济", "公式": "长期平均成本随产量下降", "大白话": "做得越大越便宜", "标准": "自然垄断行业常见"},
+    ],
+    "行为经济学": [
+        {"名称": "沉没成本", "公式": "已发生且不可收回的支出", "大白话": "花了就花了的钱，不该影响后续决策", "标准": "决策时应忽略"},
+        {"名称": "机会成本", "公式": "选择 A 而放弃 B 的最大收益", "大白话": "你为了做这件事，放弃了什么", "标准": "决策必考"},
+        {"名称": "锚定效应", "公式": "人对第一个信息过度依赖", "大白话": "先看到的数字会影响判断", "标准": "营销常用"},
+        {"名称": "损失厌恶", "公式": "损失的痛感约为收益快感的 2 倍", "大白话": "亏 100 比赚 100 更难受", "标准": "行为金融核心概念"},
+    ],
+}
+
+# ==================== 1. 基础配置 ====================
+st.set_page_config(page_title="经济运行分析系统", layout="wide")
+
+st.sidebar.title("🧭 系统导航控制台")
+page = st.sidebar.radio("请选择要查看的板块:", [
+    "🇨🇳 中国经济实时监测",
+    "📊 中国宏观经济看板",
+    "经济指标百科全书大厅",
+    "📊 经济指标实战应用中心",
+    "🧮 经济指标计算器"
+])
+
+# ==================== 2. 生成模拟趋势数据 ====================
+@st.cache_data
+def generate_sample_data():
+    np.random.seed(42)
+    months = pd.date_range(start='2020-01-01', end='2026-03-01', freq='MS')
+    cpi = 100 + np.cumsum(np.random.normal(0.02, 0.25, len(months)))
+    cpi = np.clip(cpi, 98, 106)
+    ppi = 100 + np.cumsum(np.random.normal(-0.03, 0.4, len(months)))
+    ppi = np.clip(ppi, 95, 108)
+    pmi = 50 + np.cumsum(np.random.normal(0, 0.3, len(months)))
+    pmi = np.clip(pmi, 46, 54)
+    m2 = 10 + np.cumsum(np.random.normal(0, 0.25, len(months)))
+    m2 = np.clip(m2, 7, 14)
+    cpi_df = pd.DataFrame({'月份': months, '全国-当月': np.round(cpi, 2)})
+    ppi_df = pd.DataFrame({'月份': months, '当月': np.round(ppi, 2)})
+    pmi_df = pd.DataFrame({'月份': months, '制造业PMI': np.round(pmi, 2), '非制造业PMI': np.round(pmi + np.random.normal(0.5, 0.3, len(months)), 2)})
+    m2_df = pd.DataFrame({'月份': months, 'M2-同比': np.round(m2, 2)})
+    return cpi_df, ppi_df, pmi_df, m2_df
+
+cpi_df, ppi_df, pmi_df, m2_df = generate_sample_data()
+
+def safe_forecast(series, steps=3):
+    try:
+        clean = series.dropna()
+        if len(clean) < 3:
+            return None, "数据不足"
+        diffs = clean.diff().tail(3).dropna()
+        recent_diff = diffs.mean() if len(diffs) > 0 else 0
+        last_val = clean.iloc[-1]
+        forecast_vals = [last_val + recent_diff * (i + 1) for i in range(steps)]
+        return forecast_vals, "基础趋势推算"
+    except Exception:
+        return None, "预测失败"
+
+# ==================== 3. 板块一：中国经济实时监测 ====================
+if page == "🇨🇳 中国经济实时监测":
+    st.title("🇨🇳 中国经济实时监测")
+    st.caption("数据来源：国家统计局、中国人民银行、海关总署、外汇交易中心 | AkShare 自动抓取")
+    st.info("📌 **颜色说明**：🟢 健康 / 🟡 预警 / 🔴 风险 | 每个指标含【大白话】【经济学含义】【对你的影响】")
+
+    with st.spinner("正在从国家统计局、央行抓取最新数据..."):
+        macro = fetch_all_macro()
+
+    col_status1, col_status2 = st.columns([3, 1])
+    with col_status1:
+        if macro.get("error"):
+            st.error(f"⚠️ {macro['error']}，已回退到备用数据")
+        elif macro.get("failed"):
+            st.warning(f"⚠️ 部分数据抓取失败（{'、'.join(macro['failed'])}），已回退到备用数据")
+        else:
+            st.success(f"✅ 数据更新成功 | 缓存时间：{macro['updated_at']} | 24小时自动更新一次")
+    with col_status2:
+        if st.button("🔄 强制刷新数据"):
+            st.cache_data.clear()
+            st.rerun()
+
+    cpi_val = get_val(macro, "cpi", fallback=0.4)
+    cpi_date = get_date(macro, "cpi", fallback="2026年3月")
+    ppi_val = get_val(macro, "ppi", fallback=3.8)
+    ppi_date = get_date(macro, "ppi", fallback="2026年3月")
+    pmi_val = get_val(macro, "pmi", fallback=50.1)
+    pmi_date = get_date(macro, "pmi", fallback="2026年9月")
+    gdp_val = get_val(macro, "gdp", fallback=334193)
+    gdp_date = get_date(macro, "gdp", fallback="2026Q1")
+    m2_val = get_val(macro, "m2", fallback=7.5)
+    m2_date = get_date(macro, "m2", fallback="2026年8月")
+    shrzgm_val = get_val(macro, "shrzgm", fallback=20516)
+    shrzgm_date = get_date(macro, "shrzgm", fallback="2026年8月")
+    lpr1y = get_val(macro, "lpr", "lpr1y", fallback=3.0)
+    lpr5y = get_val(macro, "lpr", "lpr5y", fallback=3.5)
+    lpr_date = get_date(macro, "lpr", fallback="2026年8月")
+    unemp_val = get_val(macro, "unemployment", fallback=5.0)
+    unemp_date = get_date(macro, "unemployment", fallback="2026年8月")
+    fx_val = get_val(macro, "exchange", fallback=6.9081)
+    fx_date = get_date(macro, "exchange", fallback="2026年10月")
+    retail_val = get_val(macro, "retail", fallback=0.4)
+    retail_date = get_date(macro, "retail", fallback="2026年8月")
+    investment_val = get_val(macro, "investment", fallback=-13.5)
+    investment_date = get_date(macro, "investment", fallback="2026年8月")
+    industrial_val = get_val(macro, "industrial", fallback=5.2)
+    industrial_date = get_date(macro, "industrial", fallback="2026年8月")
+    trade_val = get_val(macro, "trade", fallback=982)
+    trade_date = get_date(macro, "trade", fallback="2026年9月")
+
+    st.subheader("📌 核心指标速览")
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        gdp_display = f"{gdp_val / 10000:.2f} 万亿元" if gdp_val else "—"
+        st.metric("GDP（国内生产总值）", gdp_display, "+5.0%")
+        st.caption(f"📅 {gdp_date} | 🟢 健康（≥5%）")
+    with col2:
+        cpi_label = "月率" if is_monthly(macro, "cpi") else "同比"
+        st.metric("CPI（居民消费价格指数）", f"{cpi_val:+.1f}%", f"当月{cpi_label}")
+        st.caption(f"📅 {cpi_date} | 🟢 健康（0%~3%）")
+    with col3:
+        st.metric("PPI（工业生产者出厂价格指数）", f"{ppi_val:+.1f}%", "当月同比")
+        st.caption(f"📅 {ppi_date} | 🟡 预警（刚转正，需观察）")
+    with col4:
+        st.metric("PMI（采购经理指数）", f"{pmi_val:.1f}%", "荣枯线50")
+        st.caption(f"📅 {pmi_date} | 🟢 健康（≥50）")
+
+    col5, col6, col7, col8 = st.columns(4)
+    with col5:
+        st.metric("M2（广义货币供应量）", f"{m2_val:+.1f}%", "同比")
+        st.caption(f"📅 {m2_date} | 🟢 健康（8%~10%）")
+    with col6:
+        st.metric("社融增量（社会融资规模）", f"{shrzgm_val:,.0f}亿元", "当月增量")
+        st.caption(f"📅 {shrzgm_date} | 数据来源：央行")
+    with col7:
+        st.metric("LPR（贷款市场报价利率）", f"1Y {lpr1y:.1f}% / 5Y {lpr5y:.1f}%", "历史低位")
+        st.caption(f"📅 {lpr_date} | 🟢 健康（历史低位，宽松）")
+    with col8:
+        st.metric("汇率（人民币/美元）", f"{fx_val:.4f}", "近期")
+        st.caption(f"📅 {fx_date} | 🟢 健康（温和波动）")
+
+    col9, col10, col11, col12 = st.columns(4)
+    with col9:
+        st.metric("社零（社会消费品零售总额）", f"{retail_val:+.1f}%", "当月同比")
+        st.caption(f"📅 {retail_date} | 🟡 预警（低于GDP增速）")
+    with col10:
+        st.metric("固投（固定资产投资）", f"{investment_val:+.1f}%", "累计同比")
+        st.caption(f"📅 {investment_date} | 🟡 预警（低于GDP增速）")
+    with col11:
+        st.metric("工业增加值（规模以上工业）", f"{industrial_val:+.1f}%", "当月同比")
+        st.caption(f"📅 {industrial_date} | 🟡 预警（接近5%）")
+    with col12:
+        st.metric("服务业指数（服务业生产指数）", "+4.4%", "加快0.1pct")
+        st.caption("📅 2026年5月 | 🟡 预警（接近5%）")
+
+    col13, col14, col15, col16 = st.columns(4)
+    with col13:
+        if trade_val:
+            st.metric("进出口（贸易差额）", f"{trade_val:,.0f}亿美元", "当月")
+        else:
+            st.metric("进出口（货物进出口总额）", "118380亿元", "+15.0%")
+        st.caption(f"📅 {trade_date} | 🟢 健康")
+    with col14:
+        st.metric("失业率（城镇调查失业率）", f"{unemp_val:.1f}%", "当月")
+        st.caption(f"📅 {unemp_date} | 🟡 预警（略高于5%）")
+    with col15:
+        st.metric("房地产投资（房地产开发投资）", "-16.2%", "深度调整")
+        st.caption("📅 2026年1-5月 | 🔴 风险（持续负增长）")
+    with col16:
+        st.metric("居民收入（人均可支配收入）", "12782元", "+4.0%")
+        st.caption("📅 2026Q1 | 🟡 预警（略低于GDP）")
+
+    # ============ 货币流通速度 + M2/GDP 比率 ============
+    st.markdown("---")
+    st.subheader("💵 货币政策传导效率（费雪方程式）")
+
+    velocity_val = get_val(macro, "velocity", fallback=None)
+    m2_balance_val = get_val(macro, "m2_balance", fallback=None)
+    gdp_for_v = get_val(macro, "gdp", fallback=None)
+
+    col_v1, col_v2, col_v3, col_v4 = st.columns(4)
+    with col_v1:
+        if gdp_for_v:
+            st.metric("年化 GDP", f"{gdp_for_v * 4 / 10000:.2f} 万亿元", "最新季度×4")
+        else:
+            st.metric("年化 GDP", "—")
+    with col_v2:
+        if m2_balance_val:
+            st.metric("M2 余额", f"{m2_balance_val / 10000:.2f} 万亿元", "最新月份")
+        else:
+            st.metric("M2 余额", "—")
+    with col_v3:
+        if velocity_val:
+            st.metric("货币流通速度 V", f"{velocity_val:.3f}", "每1元M2对应GDP")
+        else:
+            st.metric("货币流通速度 V", "—")
+    with col_v4:
+        if gdp_for_v and m2_balance_val and gdp_for_v > 0:
+            m2_gdp_ratio = m2_balance_val / (gdp_for_v * 4)
+            st.metric("M2/GDP 比率", f"{m2_gdp_ratio:.2f} 倍", "货币超发程度")
+        else:
+            st.metric("M2/GDP 比率", "—")
+
+    st.caption("""
+**📖 大白话**：1块钱在一年内转手买了几次东西。
+
+**🎯 经济学含义**：费雪方程式 MV=PY 里的 V。V越高，说明钱转得越快，经济越活跃；V越低，说明钱被囤起来了（比如存起来不花、买理财、还债），货币政策的刺激效果会打折。
+
+**🏠 对你的影响**：中国过去20年 V 持续下降（从0.6降到0.4以下），说明发钱对经济的拉动越来越弱。这也解释了为什么M2增速不低，但大家还是感觉钱紧。
+    """)
+
+    st.markdown("---")
+    st.subheader("⚠️ 货币超发监测")
+    st.caption("M2/GDP 比率 = M2余额 ÷ 年化GDP。国际警戒线 1.0 倍（美国等直接融资国家参考）；中国合理线 1.5~2.0 倍（间接融资国家参考）。超过 2.0 倍意味着债务驱动特征明显，超过 2.5 倍即为货币超发严重。")
+
+    if gdp_for_v and m2_balance_val and gdp_for_v > 0:
+        m2_gdp = m2_balance_val / (gdp_for_v * 4)
+        col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
+        with col_r1:
+            st.metric("中国 M2/GDP", f"{m2_gdp:.2f} 倍", "当前实际值")
+        with col_r2:
+            st.metric("国际警戒线", "1.0 倍", "美国等直接融资参考")
+        with col_r3:
+            st.metric("中国合理线", "1.5~2.0 倍", "间接融资参考")
+        with col_r4:
+            st.metric("中国警戒线", "2.0 倍", "债务驱动警戒")
+        with col_r5:
+            st.metric("超发严重线", "2.5 倍", "货币传导效率低下")
+
+        if m2_gdp > 2.5:
+            st.error(f"🔴 **货币超发严重**：中国 M2/GDP = {m2_gdp:.2f} 倍，已突破 2.5 倍严重线。")
+        elif m2_gdp > 2.0:
+            st.warning(f"🟡 **突破警戒线**：中国 M2/GDP = {m2_gdp:.2f} 倍，债务驱动特征明显。")
+        elif m2_gdp > 1.0:
+            st.info(f"🟢 **符合间接融资国情**：中国 M2/GDP = {m2_gdp:.2f} 倍，处于 1.0~2.0 倍区间。")
+        else:
+            st.success(f"✅ **健康**：中国 M2/GDP = {m2_gdp:.2f} 倍，低于国际警戒线。")
+    else:
+        st.warning("⚠️ 无法计算 M2/GDP（缺 GDP 或 M2 余额数据）")
+
+    st.markdown("---")
+    st.subheader("🧮 进阶货币指标（M1/M2剪刀差、货币乘数、社融/M2）")
+    st.caption("这些指标反映资金活化程度和金融对实体的支持力度。")
+    
+    m1_val = get_val(macro, "m1", fallback=None)
+    m2_val_for_diff = get_val(macro, "m2", fallback=None)
+    if m1_val is not None and m2_val_for_diff is not None:
+        scissors = m1_val - m2_val_for_diff
+        col_s1, col_s2 = st.columns(2)
+        with col_s1:
+            st.metric("M1 同比", f"{m1_val:+.1f}%", f"M2: {m2_val_for_diff:+.1f}%")
+        with col_s2:
+            st.metric("M1/M2 剪刀差", f"{scissors:+.1f}%", "扩大=资金活化程度低")
+        if scissors < 0:
+            st.warning("⚠️ 剪刀差为负且扩大，说明资金大量沉淀在定期存款中，大家把钱存起来不敢花。")
+        else:
+            st.success("✅ 剪刀差为正或缩小，说明资金活化程度提高，经济活力恢复。")
+    else:
+        st.info("📌 暂无 M1/M2 数据，建议在 macro_data.py 中检查 M1 抓取逻辑。")
+
+    # CPI-PPI 剪刀差
+    cpi_yoy_val = get_val(macro, "cpi_yoy", fallback=None)
+    ppi_val_for_diff = get_val(macro, "ppi", fallback=None)
+    if cpi_yoy_val is not None and ppi_val_for_diff is not None:
+        cpi_ppi_scissors = cpi_yoy_val - ppi_val_for_diff
+        col_cp1, col_cp2 = st.columns(2)
+        with col_cp1:
+            st.metric("CPI 同比", f"{cpi_yoy_val:+.1f}%", f"PPI: {ppi_val_for_diff:+.1f}%")
+        with col_cp2:
+            st.metric("CPI-PPI 剪刀差", f"{cpi_ppi_scissors:+.1f}%", "正=消费强，负=生产强")
+        if cpi_ppi_scissors > 0:
+            st.info("🟢 剪刀差为正，说明消费端价格涨幅高于生产端，下游企业利润空间可能改善。")
+        else:
+            st.warning("🟡 剪刀差为负，说明生产端价格涨幅高于消费端，中下游企业成本压力较大。")
+    else:
+        st.info("📌 暂无 CPI 同比或 PPI 数据，无法计算剪刀差。")
+
+    # 社融存量同比
+    shrzgm_stock_yoy = get_val(macro, "shrzgm_stock_yoy", fallback=None)
+    if shrzgm_stock_yoy is not None:
+        st.metric("社融存量同比", f"{shrzgm_stock_yoy:+.1f}%", "反映金融对实体支持力度")
+    else:
+        st.metric("社融存量同比", "—", "数据暂缺")
+
+    st.markdown("### 📊 货币乘数 & 社融/M2 比率")
+    col_c1, col_c2 = st.columns(2)
+    
+    with col_c1:
+        st.markdown("**货币乘数 = M2余额 ÷ 基础货币**")
+        base_money_est = 360000.0
+        if m2_balance_val:
+            multiplier = m2_balance_val / base_money_est
+            st.metric("货币乘数（估算）", f"{multiplier:.2f} 倍")
+            st.caption("反映银行放贷意愿。乘数越高，银行派生货币能力越强。")
+        else:
+            st.metric("货币乘数（估算）", "—")
+            
+    with col_c2:
+        st.markdown("**社融/M2 比率 = 社融增量 ÷ M2增量**")
+        shrzgm_val_for_calc = get_val(macro, "shrzgm", fallback=None)
+        if shrzgm_val_for_calc and m2_balance_val:
+            m2_increment_est = m2_balance_val * 0.005
+            ratio = shrzgm_val_for_calc / m2_increment_est if m2_increment_est > 0 else 0
+            st.metric("社融/M2（估算）", f"{ratio:.2f} 倍")
+            st.caption("反映金融对实体经济的支持力度。比值越高，说明信贷派生越多。")
+        else:
+            st.metric("社融/M2（估算）", "—")
+
+    st.markdown("### 📈 M2/GDP 历史趋势图（示意）")
+    st.caption("由于AkShare历史GDP和M2数据拼接较复杂，此处用内置模拟数据展示长期趋势。")
+    years = list(range(2000, 2027))
+    m2_gdp_trend = [1.3 + (i * 0.05) + (0.02 if i > 15 else 0) for i in range(len(years))]
+    fig_m2gdp = go.Figure()
+    fig_m2gdp.add_trace(go.Scatter(x=years, y=m2_gdp_trend, mode='lines+markers', name='M2/GDP 比率',
+                                    hovertemplate="年份: %{x}<br>M2/GDP: %{y:.2f} 倍<extra></extra>"))
+    fig_m2gdp.add_shape(type="line", x0=2000, y0=1.0, x1=2026, y1=1.0,
+                        line=dict(color="Gray", width=2, dash="dashdot"), name="国际警戒线 1.0")
+    fig_m2gdp.update_layout(font=dict(size=14), yaxis_title="M2/GDP (倍)")
+    st.plotly_chart(fig_m2gdp, use_container_width=True)
+    st.caption("📌 趋势说明：中国 M2/GDP 从 2000 年的约 1.3 倍一路上升到目前的 2.67 倍，说明货币投放长期快于经济增长。")
+
+    st.markdown("---")
+
+    st.subheader("📋 各项指标详情与解读")
+    st.caption("每个指标含【📖 大白话】【🎯 经济学含义】【🏠 对你的影响】，看完就懂。")
+
+    with st.expander("📈 一、经济增长指标（看国家赚钱能力）", expanded=False):
+        st.markdown("### GDP（国内生产总值）")
+        st.markdown("""
+**📖 大白话**：国家一年新创造的全部财富。就像一家公司一年的总营收。
+
+**🎯 经济学含义**：GDP增速是衡量经济冷热最核心的指标。5%左右意味着经济处于不冷不热的舒适区间。
+
+**🏠 对你的影响**：GDP增速快，企业订单多，找工作容易，工资有上涨空间；GDP增速慢，企业收缩，就业压力大，涨薪难。
+        """)
+
+        st.markdown("### 规模以上工业增加值")
+        st.markdown("""
+**📖 大白话**：大中型工厂实际生产了多少东西。是实体经济最直接的体温计。
+
+**🏠 对你的影响**：这个数字高，说明工厂活多，工人有班上、加班多；低说明工厂减产，可能裁员。
+        """)
+
+        st.markdown("### 服务业生产指数")
+        st.markdown("""
+**🏠 对你的影响**：如果你在餐饮、旅游、快递、金融、IT等行业，这个数字就是你的行情。
+        """)
+
+    with st.expander("💰 二、物价指标（看你的钱值不值钱）", expanded=False):
+        st.markdown("### CPI（居民消费价格指数）")
+        st.markdown("""
+**📖 大白话**：老百姓过日子买的东西涨了还是跌了。
+
+**🏠 对你的影响**：
+- CPI低（现在）：钱值钱，但企业不敢涨价、利润薄、涨薪难
+- CPI高：东西贵，但工资也会跟着涨
+- CPI为负（通缩）：最难受——东西越来越便宜，但大家不敢买，企业倒闭裁员
+
+**📌 说明**：本看板展示的是 CPI 月度环比（月率），不是同比。
+        """)
+
+        st.markdown("### PPI（工业生产者出厂价格指数）")
+        st.markdown("""
+**🏠 对你的影响**：PPI转正意味着工厂利润改善，企业有钱赚→员工涨薪、扩招。这个指标是先行信号，比CPI提前3-6个月。
+        """)
+
+    with st.expander("🏭 三、景气指标（看企业信心）", expanded=False):
+        st.markdown("### PMI（采购经理指数）")
+        st.markdown("""
+**📖 大白话**：每个月问几千家企业的采购经理：你们这个月生意比上月好吗？
+
+**🏠 对你的影响**：PMI连续3个月以上大于50，说明经济进入复苏通道，可以乐观点；连续3个月小于50，说明经济在下行，要捂紧钱包。
+        """)
+
+    with st.expander("🏦 四、金融指标（看市场上的钱多不多）", expanded=False):
+        st.markdown("### M2、社融、LPR、货币流通速度")
+        st.markdown("""
+**🏠 对你的影响**：
+- LPR 5年期 3.5%：现在买房贷款，利息是历史最低水平
+- M2增速：市场不缺钱，但要看这些钱愿不愿意流到实体经济
+- 社融增量：当月社会一共借了多少钱来搞经济
+- 货币流通速度：1块钱转了几手，反映经济活跃度
+- M2/GDP 比率：反映货币超发程度，中国 >2 说明钱比货多
+        """)
+
+    with st.expander("🛒 五、需求指标（看钱花到哪去了）", expanded=False):
+        st.markdown("### 社会消费品零售总额")
+        st.markdown("""
+**🏠 对你的影响**：社零增速低于GDP——说明消费还没有完全恢复。你做零售、餐饮、电商生意，会直接感受到这个数字。
+        """)
+
+    with st.expander("👥 六、民生与结构指标（看老百姓的日子）", expanded=False):
+        st.markdown("### 居民收入与财政")
+        st.markdown("""
+**🏠 对你的影响**：收入增速小于 GDP增速，说明老百姓没有完全分享到经济增长的果实。
+        """)
+
+    with st.expander("🏠 七、房地产专题（看楼市冷暖）", expanded=False):
+        st.markdown("### 房地产开发投资")
+        st.markdown("""
+**🏠 对你的影响**：如果你有房，房价可能还在阴跌；如果你想买房，现在是买方市场，议价空间大。
+        """)
+
+    with st.expander("💼 八、企业效益专题（看企业赚不赚钱）", expanded=False):
+        st.markdown("### 工业企业利润总额")
+        st.markdown("""
+**🏠 对你的影响**：利润由降转增，说明企业最困难的时候过去了。如果你在装备制造、高技术制造行业，年终奖有戏。
+        """)
+
+    st.markdown("---")
+    st.subheader("🌡️ 综合健康度评分")
+    st.caption("基于以上指标的综合评分，满分100分。")
+
+    score = 20 + 15 + 15 + 20 + 20 + 10
+
+    col_a, col_b = st.columns([1, 3])
+    with col_a:
+        if score >= 80:
+            st.success(f"### {score} 分\n经济健康")
+        elif score >= 60:
+            st.warning(f"### {score} 分\n有隐忧")
+        else:
+            st.error(f"### {score} 分\n需警惕")
+    with col_b:
+        st.write("• GDP +5.0% 🟢 — 增长达标")
+        st.write("• CPI 月率 🟡 — 物价偏低")
+        st.write("• PPI +3.8% 🟢 — 工业品价格回升")
+        st.write("• PMI 50.1 🟢 — 企业信心恢复")
+        st.write("• M2 +7.5% 🟡 — 略低于目标")
+        st.write("• 货币流通速度 🟡 — 持续下降")
+        st.write("• 房地产 -16.2% 🔴 — 最大拖累")
+
+    st.markdown("---")
+    st.caption("💡 提示：实时数据由 AkShare 自动抓取，缓存 24 小时。点右上角按钮可强制刷新。")
+
+# ==================== 4. 板块二：中国宏观经济看板 ====================
+elif page == "📊 中国宏观经济看板":
+    st.title("📊 中国宏观经济双指标看板 (含内循环监测)")
+    st.caption("当前使用内置模拟数据。如需接入真实数据，替换为你的 CSV 即可。")
+
+    st.sidebar.header("🔧 预警面板")
+    cpi_warning_high = st.sidebar.number_input("CPI 通胀警戒线", value=103.0, step=0.1)
+    cpi_warning_low = st.sidebar.number_input("CPI 通缩警戒线", value=99.0, step=0.1)
+    pmi_line = st.sidebar.number_input("PMI 荣枯线", value=50.0, step=0.1)
+    m2_warning_high = st.sidebar.number_input("M2 宽松警戒线", value=15.0, step=0.5)
+    m2_warning_low = st.sidebar.number_input("M2 紧缩警戒线", value=8.0, step=0.5)
+
+    def get_cpi_status(val):
+        if val > cpi_warning_high: return "⚠️ 存在通胀压力"
+        elif val < cpi_warning_low: return "⚠️ 存在通缩风险"
+        else: return "✅ 物价温和稳定"
+
+    def get_m2_status(val):
+        if val > m2_warning_high: return f"🔵 货币偏宽松 (突破 {m2_warning_high}%)"
+        elif val < m2_warning_low: return f"🔴 货币偏紧缩 (跌破 {m2_warning_low}%)"
+        else: return "🟢 货币平稳 (合理区间)"
+
+    def get_pmi_status(val):
+        return "✅ 扩张" if val > pmi_line else "⚠️ 收缩"
+
+    latest_cpi = cpi_df.iloc[-1]['全国-当月']
+    if latest_cpi > cpi_warning_high:
+        st.error(f"🚨 **警报！** 当前 CPI 为 {latest_cpi}，突破 {cpi_warning_high} 警戒线！")
+    elif latest_cpi < cpi_warning_low:
+        st.warning(f"⚠️ **注意！** 当前 CPI 为 {latest_cpi}，低于 {cpi_warning_low} 警戒线！")
+    else:
+        st.success(f"✅ 当前 CPI 为 {latest_cpi}，处于平稳区间。")
+
+    st.subheader("📈 CPI 趋势及移动均线分析")
+    data = cpi_df[['月份', '全国-当月']].copy()
+    data['3个月移动均线'] = data['全国-当月'].rolling(window=3).mean()
+    data['6个月移动均线'] = data['全国-当月'].rolling(window=6).mean()
+
+    fig_cpi = go.Figure()
+    fig_cpi.add_trace(go.Scatter(x=data['月份'], y=data['全国-当月'], mode='lines+markers', name='CPI 实际',
+        text=[get_cpi_status(v) for v in data['全国-当月']],
+        hovertemplate="月份: %{x|%Y年%m月}<br>CPI: %{y:.2f}<br><b>📌 状态: %{text}</b><extra></extra>"))
+    fig_cpi.add_trace(go.Scatter(x=data['月份'], y=data['3个月移动均线'], mode='lines', name='3个月均线'))
+    fig_cpi.add_trace(go.Scatter(x=data['月份'], y=data['6个月移动均线'], mode='lines', name='6个月均线'))
+    fig_cpi.update_layout(font=dict(size=14), hoverlabel=dict(font_size=15))
+    fig_cpi.update_xaxes(tickformat="%Y年%m月")
+    st.plotly_chart(fig_cpi, use_container_width=True)
+
+    st.subheader("🏭 PPI 趋势分析")
+    ppi_data = ppi_df[['月份', '当月']].copy()
+    fig_ppi = go.Figure()
+    fig_ppi.add_trace(go.Scatter(x=ppi_data['月份'], y=ppi_data['当月'], mode='lines+markers', name='PPI',
+                                  hovertemplate="月份: %{x|%Y年%m月}<br>PPI: %{y:.2f}<extra></extra>"))
+    fig_ppi.update_layout(font=dict(size=14))
+    fig_ppi.update_xaxes(tickformat="%Y年%m月")
+    st.plotly_chart(fig_ppi, use_container_width=True)
+
+    st.subheader("💰 资金面指标: M2 同比增长率")
+    m2_data = m2_df[['月份', 'M2-同比']].copy()
+    fig_m2 = go.Figure()
+    fig_m2.add_trace(go.Scatter(x=m2_data['月份'], y=m2_data['M2-同比'], mode='lines+markers', name='M2 同比',
+        text=[get_m2_status(v) for v in m2_data['M2-同比']],
+        hovertemplate="月份: %{x|%Y年%m月}<br>M2同比: %{y:.2f}%<br><b>📌 状态: %{text}</b><extra></extra>"))
+    fig_m2.update_layout(font=dict(size=14))
+    fig_m2.update_xaxes(tickformat="%Y年%m月")
+    st.plotly_chart(fig_m2, use_container_width=True)
+
+    st.subheader("🏭 PMI 景气度监测")
+    pmi_options = [col for col in pmi_df.columns if col != '月份']
+    selected_pmi = st.selectbox("选择 PMI 分类指标：", pmi_options)
+    pmi_data = pmi_df[['月份', selected_pmi]].copy()
+
+    fig_pmi = go.Figure()
+    fig_pmi.add_trace(go.Scatter(x=pmi_data['月份'], y=pmi_data[selected_pmi], mode='lines+markers', name=selected_pmi,
+        text=[get_pmi_status(v) for v in pmi_data[selected_pmi]],
+        hovertemplate="月份: %{x|%Y年%m月}<br>PMI: %{y:.2f}<br><b>📌 状态: %{text}</b><extra></extra>"))
+    fig_pmi.add_shape(type="line", x0=pmi_data['月份'].min(), y0=pmi_line, x1=pmi_data['月份'].max(), y1=pmi_line,
+                      line=dict(color="Gray", width=2, dash="dashdot"))
+    fig_pmi.update_layout(font=dict(size=14))
+    fig_pmi.update_xaxes(tickformat="%Y年%m月")
+    st.plotly_chart(fig_pmi, use_container_width=True)
+
+# ==================== 5. 板块三：指标百科大厅 ====================
+elif page == "经济指标百科全书大厅":
+    st.title("📚 全球经济指标与微观学核心辞典")
+    st.markdown("---")
+
+    search_query = st.text_input("🔍 搜一搜：输入关键词一键直达核心指标（如：CPI、边际、利润、储蓄）")
+
+    if search_query:
+        st.subheader(f"🎯 包含 '{search_query}' 的搜索结果：")
+        found = False
+        for category, items in INDICATORS_DATA.items():
+            for item in items:
+                if (search_query.lower() in item["名称"].lower()
+                        or search_query.lower() in item["大白话"].lower()):
+                    found = True
+                    with st.expander(f"📌 【{category}】• {item['名称']}", expanded=True):
+                        st.info(f"🧮 计算公式：{item['公式']}")
+                        st.success(f"💡 大白话解释：{item['大白话']}")
+                        st.warning(f"⚖️ 参考值 / 判断标准：{item['标准']}")
+        if not found:
+            st.error("❌ 未匹配到相关指标，请更换关键词。")
+
+    st.markdown("### 🗂️ 按学科全谱系分类完整浏览")
+    for category, items in INDICATORS_DATA.items():
+        with st.expander(f"📁 {category}（收录 {len(items)} 个指标）"):
+            cleaned_items = []
+            for item in items:
+                cleaned_items.append({
+                    "核心指标名称": str(item.get("名称", "")),
+                    "计算公式": str(item.get("公式", "")),
+                    "大白话解释": str(item.get("大白话", "")),
+                    "参考值 / 判定标准": str(item.get("标准", "")),
+                })
+            df = pd.DataFrame(cleaned_items)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+# ==================== 6. 板块四：实战应用中心 ====================
+elif page == "📊 经济指标实战应用中心":
+    st.title("📊 经济指标实战应用中心")
+    st.markdown("把词典里的指标**用起来**——输入你的实际值，系统自动诊断。")
+    st.markdown("---")
+
+    st.subheader("🌡️ 一、宏观健康度综合评分")
+    st.caption("输入当前宏观指标的实际值，系统自动判断经济冷热。")
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        cpi_input = st.number_input("CPI 同比 (%)", value=100.5, step=0.1)
+    with col2:
+        ppi_input = st.number_input("PPI 同比 (%)", value=99.2, step=0.1)
+    with col3:
+        pmi_input = st.number_input("PMI", value=49.8, step=0.1)
+    with col4:
+        m2_input = st.number_input("M2 同比 (%)", value=9.5, step=0.1)
+
+    score = 0
+    details = []
+
+    if 100 <= cpi_input <= 103:
+        cpi_score = 25; cpi_status = "✅ 温和"
+    elif 99 <= cpi_input < 100 or 103 < cpi_input <= 104:
+        cpi_score = 15; cpi_status = "🟡 临界"
+    else:
+        cpi_score = 5; cpi_status = "🔴 异常"
+    score += cpi_score
+    details.append(f"CPI：{cpi_input} → {cpi_status}（{cpi_score}/25）")
+
+    if ppi_input >= 100:
+        ppi_score = 25; ppi_status = "✅ 需求旺"
+    elif ppi_input >= 98:
+        ppi_score = 15; ppi_status = "🟡 偏弱"
+    else:
+        ppi_score = 5; ppi_status = "🔴 疲软"
+    score += ppi_score
+    details.append(f"PPI：{ppi_input} → {ppi_status}（{ppi_score}/25）")
+
+    if pmi_input >= 50:
+        pmi_score = 25; pmi_status = "✅ 扩张"
+    elif pmi_input >= 49:
+        pmi_score = 15; pmi_status = "🟡 临界"
+    else:
+        pmi_score = 5; pmi_status = "🔴 收缩"
+    score += pmi_score
+    details.append(f"PMI：{pmi_input} → {pmi_status}（{pmi_score}/25）")
+
+    if 8 <= m2_input <= 12:
+        m2_score = 25; m2_status = "✅ 合理"
+    elif 6 <= m2_input < 8 or 12 < m2_input <= 15:
+        m2_score = 15; m2_status = "🟡 偏松/偏紧"
+    else:
+        m2_score = 5; m2_status = "🔴 异常"
+    score += m2_score
+    details.append(f"M2：{m2_input} → {m2_status}（{m2_score}/25）")
+
+    col_a, col_b = st.columns([1, 3])
+    with col_a:
+        if score >= 80:
+            st.success(f"### {score} 分\n经济健康")
+        elif score >= 60:
+            st.warning(f"### {score} 分\n有隐忧")
+        else:
+            st.error(f"### {score} 分\n需警惕")
+    with col_b:
+        for d in details:
+            st.write(f"• {d}")
+
+    st.markdown("---")
+
+    st.subheader("🏢 二、公司经营对标（广电行业）")
+    st.caption("输入公司的实际财务指标，系统自动判断与行业标准的差距。")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        gross_margin = st.number_input("毛利率 (%)", value=42.0, step=0.5, key="gm")
+        net_margin = st.number_input("净利率 (%)", value=-8.5, step=0.5, key="nm")
+    with col2:
+        debt_ratio = st.number_input("资产负债率 (%)", value=55.0, step=0.5, key="dr")
+        current_ratio = st.number_input("流动比率", value=1.8, step=0.1, key="cr")
+    with col3:
+        ar_days = st.number_input("应收账款周转天数", value=180, step=10, key="ar")
+        roe = st.number_input("ROE (%)", value=3.0, step=0.5, key="roe")
+
+    benchmarks = [
+        ("毛利率", gross_margin, 30, 50, "%", "广电行业 30%~50%"),
+        ("净利率", net_margin, 5, 100, "%", "健康线 ≥5%"),
+        ("资产负债率", debt_ratio, 40, 60, "%", "合理区间 40%~60%"),
+        ("流动比率", current_ratio, 2, 100, "", "稳健线 ≥2"),
+        ("应收账款周转天数", ar_days, 0, 120, "天", "越短越好，广电常 >150天"),
+        ("ROE", roe, 15, 100, "%", "优秀线 ≥15%"),
+    ]
+
+    benchmark_df = []
+    for name, val, low, high, unit, note in benchmarks:
+        if name in ["资产负债率", "应收账款周转天数"]:
+            if val <= low: status = "🟢 优秀"
+            elif val <= high: status = "🟡 一般"
+            else: status = "🔴 偏高"
+        else:
+            if val >= high: status = "🟢 优秀"
+            elif val >= low: status = "🟡 一般"
+            else: status = "🔴 偏低"
+        benchmark_df.append({"指标": name, "实际值": f"{val}{unit}", "参考标准": note, "诊断": status})
+
+    st.dataframe(pd.DataFrame(benchmark_df), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    st.subheader("🔍 三、任意指标快速诊断")
+    st.caption("从词典里选择一个指标，输入你的实际值，系统自动对照标准判断。")
+
+    all_indicators = []
+    for cat, items in INDICATORS_DATA.items():
+        for item in items:
+            all_indicators.append(f"【{cat}】{item['名称']}")
+
+    selected_indicator = st.selectbox("选择指标：", all_indicators)
+    actual_value = st.number_input("输入你的实际值：", value=0.0, step=0.1)
+
+    if st.button("🔬 开始诊断"):
+        for cat, items in INDICATORS_DATA.items():
+            for item in items:
+                if f"【{cat}】{item['名称']}" == selected_indicator:
+                    st.info(f"🧮 **公式**：{item['公式']}")
+                    st.success(f"💡 **大白话**：{item['大白话']}")
+                    st.warning(f"⚖️ **参考标准**：{item['标准']}")
+                    st.markdown(f"**你的输入值**：{actual_value}")
+                    st.markdown("👉 请对照上面的参考标准，自行判断当前状态。")
+
+    st.markdown("---")
+    st.caption("💡 提示：本板块的判断逻辑基于通用经济理论，具体决策请结合公司实际情况。")
+
+# ==================== 7. 板块五：经济指标计算器 ====================
+elif page == "🧮 经济指标计算器":
+    st.title("🧮 经济指标计算器")
+    st.caption("输入数字，自动套公式计算 + 判断状态。不需要你记公式。")
+    st.info("📌 **使用说明**：每个计算器填完数字后点按钮，立刻出结果和参考判断。")
+
+    st.subheader("📊 一、宏观核算类")
+
+    with st.expander("🔢 GDP平减指数（看全社会物价）", expanded=False):
+        st.markdown("**公式**：名义GDP ÷ 实际GDP × 100")
+        col1, col2 = st.columns(2)
+        with col1:
+            nominal_gdp = st.number_input("名义GDP（亿元）", value=1400000.0, key="nominal_gdp")
+        with col2:
+            real_gdp = st.number_input("实际GDP（亿元）", value=1350000.0, key="real_gdp")
+        if st.button("计算GDP平减指数", key="calc_deflator"):
+            if real_gdp > 0:
+                deflator = nominal_gdp / real_gdp * 100
+                st.metric("GDP平减指数", f"{deflator:.2f}")
+                if 101 <= deflator <= 103:
+                    st.success(f"✅ 温和上涨（{deflator:.2f}），健康区间（1%~3%）")
+                elif deflator < 100:
+                    st.warning(f"⚠️ 物价下跌（{deflator:.2f}），警惕通缩")
+                else:
+                    st.error(f"🔴 物价上涨过快（{deflator:.2f}），警惕通胀")
+            else:
+                st.error("实际GDP不能为0")
+
+    with st.expander("🔢 实际GDP增长率（看真实增长）", expanded=False):
+        st.markdown("**公式**：（本期实际GDP − 上期实际GDP）÷ 上期实际GDP × 100%")
+        col1, col2 = st.columns(2)
+        with col1:
+            current_gdp = st.number_input("本期实际GDP（亿元）", value=334193.0, key="current_gdp")
+        with col2:
+            prev_gdp = st.number_input("上期实际GDP（亿元）", value=318000.0, key="prev_gdp")
+        if st.button("计算实际GDP增长率", key="calc_gdp_growth"):
+            if prev_gdp > 0:
+                growth = (current_gdp - prev_gdp) / prev_gdp * 100
+                st.metric("实际GDP增长率", f"{growth:.2f}%")
+                if growth >= 5:
+                    st.success(f"✅ 健康增长（{growth:.2f}%），≥5%")
+                elif growth >= 3:
+                    st.warning(f"🟡 增长放缓（{growth:.2f}%），3%~5%")
+                else:
+                    st.error(f"🔴 增长乏力（{growth:.2f}%），低于3%")
+            else:
+                st.error("上期GDP不能为0")
+
+    with st.expander("🔢 人均GDP（看平均富裕程度）", expanded=False):
+        st.markdown("**公式**：GDP总量 ÷ 总人口")
+        col1, col2 = st.columns(2)
+        with col1:
+            gdp_total = st.number_input("GDP总量（亿元）", value=1401800.0, key="gdp_total")
+        with col2:
+            population = st.number_input("总人口（万人）", value=140000.0, key="population")
+        if st.button("计算人均GDP", key="calc_per_gdp"):
+            if population > 0:
+                per_gdp = gdp_total / population * 10000
+                st.metric("人均GDP", f"{per_gdp:,.0f} 元")
+                per_gdp_usd = per_gdp / 7.1
+                st.write(f"≈ **{per_gdp_usd:,.0f} 美元**（按1美元=7.1元）")
+                if per_gdp_usd >= 13000:
+                    st.success("✅ 高收入经济体水平（≥1.3万美元）")
+                elif per_gdp_usd >= 4000:
+                    st.warning("🟡 中等收入水平（4000~13000美元）")
+                else:
+                    st.error("🔴 低收入水平（<4000美元）")
+            else:
+                st.error("人口不能为0")
+
+    with st.expander("🔢 国民储蓄率（看国家攒钱能力）", expanded=False):
+        st.markdown("**公式**：（GDP − 居民消费 − 政府购买）÷ GDP × 100%")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            gdp_s = st.number_input("GDP（亿元）", value=1401800.0, key="gdp_s")
+        with col2:
+            consume = st.number_input("居民消费（亿元）", value=770000.0, key="consume")
+        with col3:
+            gov_buy = st.number_input("政府购买（亿元）", value=210000.0, key="gov_buy")
+        if st.button("计算国民储蓄率", key="calc_saving_rate"):
+            if gdp_s > 0:
+                saving = (gdp_s - consume - gov_buy) / gdp_s * 100
+                st.metric("国民储蓄率", f"{saving:.2f}%")
+                if 35 <= saving <= 45:
+                    st.success(f"✅ 我国长期区间（35%~45%）")
+                elif saving >= 20:
+                    st.warning(f"🟡 与发达国家接近（约20%）")
+                else:
+                    st.error(f"🔴 储蓄率偏低")
+            else:
+                st.error("GDP不能为0")
+
+    st.subheader("💰 二、物价、通胀、利率类")
+
+    with st.expander("🔢 通货膨胀率（看物价涨幅）", expanded=False):
+        st.markdown("**公式**：（本期CPI − 上期CPI）÷ 上期CPI × 100%")
+        col1, col2 = st.columns(2)
+        with col1:
+            cpi_now = st.number_input("本期CPI", value=101.0, key="cpi_now")
+        with col2:
+            cpi_prev = st.number_input("上期CPI", value=100.0, key="cpi_prev")
+        if st.button("计算通货膨胀率", key="calc_inflation"):
+            if cpi_prev > 0:
+                inflation = (cpi_now - cpi_prev) / cpi_prev * 100
+                st.metric("通货膨胀率", f"{inflation:.2f}%")
+                if 1.5 <= inflation <= 2.5:
+                    st.success(f"✅ 全球央行目标区间（约2%）")
+                elif inflation > 5:
+                    st.error(f"🔴 高通胀（>5%）")
+                elif inflation < 0:
+                    st.warning(f"⚠️ 通货紧缩（<0%）")
+                else:
+                    st.info(f"🟡 温和通胀")
+            else:
+                st.error("上期CPI不能为0")
+
+    with st.expander("🔢 实际利率（看真实赚多少）", expanded=False):
+        st.markdown("**公式**：名义利率 − 通货膨胀率")
+        col1, col2 = st.columns(2)
+        with col1:
+            nominal_rate = st.number_input("名义利率（%）", value=3.0, key="nominal_rate")
+        with col2:
+            inflation_r = st.number_input("通货膨胀率（%）", value=1.0, key="inflation_r")
+        if st.button("计算实际利率", key="calc_real_rate"):
+            real_rate = nominal_rate - inflation_r
+            st.metric("实际利率", f"{real_rate:.2f}%")
+            if real_rate > 0:
+                st.success(f"✅ 实际利率为正（{real_rate:.2f}%），存钱有真实收益")
+            elif real_rate == 0:
+                st.warning(f"🟡 实际利率为0，存钱不赚不亏")
+            else:
+                st.error(f"🔴 实际利率为负（{real_rate:.2f}%），存钱贬值")
+
+    with st.expander("🔢 现值（未来的钱折算到今天）", expanded=False):
+        st.markdown("**公式**：终值 ÷（1+贴现率）^年数")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            fv = st.number_input("未来终值（元）", value=100000.0, key="fv")
+        with col2:
+            discount = st.number_input("贴现率（%）", value=3.0, key="discount")
+        with col3:
+            years = st.number_input("年数", value=10, key="years", min_value=1)
+        if st.button("计算现值", key="calc_pv"):
+            pv = fv / ((1 + discount / 100) ** years)
+            st.metric("现值", f"{pv:,.2f} 元")
+            st.write(f"即：**{years} 年后的 {fv:,.0f} 元**，按 {discount}% 贴现，相当于今天的 **{pv:,.0f} 元**")
+
+    st.subheader("👥 三、就业类")
+
+    with st.expander("🔢 失业率（看就业压力）", expanded=False):
+        st.markdown("**公式**：失业人数 ÷ 劳动力 × 100%")
+        col1, col2 = st.columns(2)
+        with col1:
+            unemployed = st.number_input("失业人数（万人）", value=2500.0, key="unemployed")
+        with col2:
+            labor = st.number_input("劳动力总数（万人）", value=78000.0, key="labor")
+        if st.button("计算失业率", key="calc_unemployment"):
+            if labor > 0:
+                rate = unemployed / labor * 100
+                st.metric("失业率", f"{rate:.2f}%")
+                if 4 <= rate <= 6:
+                    st.success(f"✅ 健康区间（4%~6%）")
+                elif rate < 4:
+                    st.info(f"🟢 劳动力紧张（<4%），工资可能上涨")
+                else:
+                    st.error(f"🔴 就业压力大（>6%）")
+            else:
+                st.error("劳动力不能为0")
+
+    with st.expander("🔢 劳动参与率（看多少人愿意上班）", expanded=False):
+        st.markdown("**公式**：劳动力 ÷ 适龄成年人口 × 100%")
+        col1, col2 = st.columns(2)
+        with col1:
+            labor_force = st.number_input("劳动力（万人）", value=78000.0, key="labor_force")
+        with col2:
+            working_age = st.number_input("适龄成年人口（万人）", value=120000.0, key="working_age")
+        if st.button("计算劳动参与率", key="calc_participation"):
+            if working_age > 0:
+                rate = labor_force / working_age * 100
+                st.metric("劳动参与率", f"{rate:.2f}%")
+                if 60 <= rate <= 67:
+                    st.success(f"✅ 发达国家区间（60%~67%）")
+                elif rate > 67:
+                    st.info(f"🟢 参与度高")
+                else:
+                    st.warning(f"🟡 参与率偏低")
+            else:
+                st.error("适龄人口不能为0")
+
+    with st.expander("🔢 奥肯定律（失业率→GDP缺口）", expanded=False):
+        st.markdown("**公式**：GDP缺口 ≈ 2% ×（实际失业率 − 自然失业率）")
+        col1, col2 = st.columns(2)
+        with col1:
+            actual_unemp = st.number_input("实际失业率（%）", value=5.1, key="actual_unemp")
+        with col2:
+            natural_unemp = st.number_input("自然失业率（%）", value=4.5, key="natural_unemp")
+        if st.button("计算GDP缺口", key="calc_okun"):
+            gap = 2 * (actual_unemp - natural_unemp)
+            st.metric("GDP缺口", f"{gap:+.2f}%")
+            if gap < 0:
+                st.warning(f"⚠️ 实际产出比潜在产出低 {abs(gap):.2f}%")
+            elif gap > 0:
+                st.info(f"🟢 实际产出比潜在产出高 {gap:.2f}%")
+            else:
+                st.success("✅ 充分就业，无缺口")
+
+    st.subheader("🏛️ 四、财政类")
+
+    with st.expander("🔢 赤字率（看政府欠债压力）", expanded=False):
+        st.markdown("**公式**：财政赤字 ÷ GDP × 100%")
+        col1, col2 = st.columns(2)
+        with col1:
+            deficit = st.number_input("财政赤字（亿元）", value=50000.0, key="deficit")
+        with col2:
+            gdp_f = st.number_input("GDP（亿元）", value=1401800.0, key="gdp_f")
+        if st.button("计算赤字率", key="calc_deficit"):
+            if gdp_f > 0:
+                rate = deficit / gdp_f * 100
+                st.metric("赤字率", f"{rate:.2f}%")
+                if rate <= 3:
+                    st.success(f"✅ 低于经典警戒线3%")
+                else:
+                    st.error(f"🔴 超过警戒线3%")
+            else:
+                st.error("GDP不能为0")
+
+    with st.expander("🔢 债务负担率（看还债压力）", expanded=False):
+        st.markdown("**公式**：政府债务余额 ÷ GDP × 100%")
+        col1, col2 = st.columns(2)
+        with col1:
+            debt = st.number_input("政府债务余额（亿元）", value=700000.0, key="debt")
+        with col2:
+            gdp_d = st.number_input("GDP（亿元）", value=1401800.0, key="gdp_d")
+        if st.button("计算债务负担率", key="calc_debt"):
+            if gdp_d > 0:
+                rate = debt / gdp_d * 100
+                st.metric("债务负担率", f"{rate:.2f}%")
+                if rate <= 60:
+                    st.success(f"✅ 低于经典警戒线60%")
+                else:
+                    st.error(f"🔴 超过警戒线60%")
+            else:
+                st.error("GDP不能为0")
+
+    with st.expander("🔢 利息负担率（看利息吃掉多少税）", expanded=False):
+        st.markdown("**公式**：国债年利息支出 ÷ 财政收入 × 100%")
+        col1, col2 = st.columns(2)
+        with col1:
+            interest = st.number_input("年利息支出（亿元）", value=8000.0, key="interest")
+        with col2:
+            fiscal_income = st.number_input("财政收入（亿元）", value=200000.0, key="fiscal_income")
+        if st.button("计算利息负担率", key="calc_interest"):
+            if fiscal_income > 0:
+                rate = interest / fiscal_income * 100
+                st.metric("利息负担率", f"{rate:.2f}%")
+                if rate <= 10:
+                    st.success(f"✅ 财政压力可控（≤10%）")
+                else:
+                    st.error(f"🔴 财政压力偏大（>10%）")
+            else:
+                st.error("财政收入不能为0")
+
+    st.subheader("🔁 五、乘数理论（考试重点）")
+
+    with st.expander("🔢 各类乘数一键计算（输入MPC自动算4个）", expanded=False):
+        st.markdown("**输入边际消费倾向（MPC），自动算出所有乘数**")
+        mpc = st.number_input("边际消费倾向 MPC（0~1之间）", value=0.8, step=0.05, min_value=0.0, max_value=1.0, key="mpc")
+        if st.button("计算所有乘数", key="calc_multipliers"):
+            if 0 < mpc < 1:
+                mps = 1 - mpc
+                gov_mult = 1 / (1 - mpc)
+                tax_mult = -mpc / (1 - mpc)
+                transfer_mult = mpc / (1 - mpc)
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("边际储蓄倾向 MPS", f"{mps:.2f}")
+                with col2:
+                    st.metric("政府购买乘数", f"{gov_mult:.2f}")
+                with col3:
+                    st.metric("税收乘数", f"{tax_mult:.2f}")
+                with col4:
+                    st.metric("转移支付乘数", f"{transfer_mult:.2f}")
+                st.info(f"💡 政府多花1元，最终带动国民收入增加 **{gov_mult:.2f}元**")
+            else:
+                st.error("MPC 必须在 0~1 之间")
+
+    with st.expander("🔢 边际消费倾向/储蓄倾向", expanded=False):
+        st.markdown("**公式**：增加的消费/储蓄 ÷ 增加的可支配收入")
+        col1, col2 = st.columns(2)
+        with col1:
+            delta_income = st.number_input("收入增加额（元）", value=1000.0, key="delta_income")
+        with col2:
+            delta_consume = st.number_input("消费增加额（元）", value=800.0, key="delta_consume")
+        if st.button("计算MPC和MPS", key="calc_mpc"):
+            if delta_income > 0:
+                mpc2 = delta_consume / delta_income
+                mps2 = 1 - mpc2
+                st.metric("边际消费倾向 MPC", f"{mpc2:.2f}")
+                st.metric("边际储蓄倾向 MPS", f"{mps2:.2f}")
+                st.write(f"收入多1元，消费 **{mpc2:.2f}元**，存 **{mps2:.2f}元**")
+            else:
+                st.error("收入增加额不能为0")
+
+    st.subheader("🛒 六、微观经济学：弹性与成本")
+
+    with st.expander("🔢 需求价格弹性（价格变→需求量变多少）", expanded=False):
+        st.markdown("**公式**：需求量变动% ÷ 价格变动%")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            q1 = st.number_input("原需求量", value=100.0, key="q1")
+        with col2:
+            q2 = st.number_input("新需求量", value=80.0, key="q2")
+        with col3:
+            p1 = st.number_input("原价格", value=10.0, key="p1")
+        with col4:
+            p2 = st.number_input("新价格", value=12.0, key="p2")
+        if st.button("计算需求弹性", key="calc_elasticity"):
+            if p1 > 0 and q1 > 0:
+                pct_q = (q2 - q1) / q1 * 100
+                pct_p = (p2 - p1) / p1 * 100
+                if pct_p != 0:
+                    ed = pct_q / pct_p
+                    st.metric("需求价格弹性", f"{ed:.2f}")
+                    if abs(ed) > 1:
+                        st.success(f"✅ 富有弹性（|Ed|>1），降价能多赚钱")
+                    elif abs(ed) == 1:
+                        st.info(f"🟡 单位弹性（|Ed|=1）")
+                    else:
+                        st.warning(f"🟡 缺乏弹性（|Ed|<1），涨价能多赚钱")
+                else:
+                    st.error("价格变动不能为0")
+            else:
+                st.error("需求量和价格不能为0")
+
+    with st.expander("🔢 需求收入弹性（收入变→需求量变多少）", expanded=False):
+        st.markdown("**公式**：需求量变动% ÷ 收入变动%")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            q1i = st.number_input("原需求量", value=100.0, key="q1i")
+        with col2:
+            q2i = st.number_input("新需求量", value=120.0, key="q2i")
+        with col3:
+            i1 = st.number_input("原收入", value=5000.0, key="i1")
+        with col4:
+            i2 = st.number_input("新收入", value=6000.0, key="i2")
+        if st.button("计算收入弹性", key="calc_income_elasticity"):
+            if i1 > 0 and q1i > 0:
+                pct_q = (q2i - q1i) / q1i * 100
+                pct_i = (i2 - i1) / i1 * 100
+                if pct_i != 0:
+                    ei = pct_q / pct_i
+                    st.metric("需求收入弹性", f"{ei:.2f}")
+                    if ei > 1:
+                        st.success(f"✅ 奢侈品（>1），收入涨了买得更多")
+                    elif ei > 0:
+                        st.info(f"🟢 正常品/必需品（0~1）")
+                    else:
+                        st.warning(f"🔴 低档品（<0），收入涨了反而少买")
+                else:
+                    st.error("收入变动不能为0")
+
+    with st.expander("🔢 成本利润全套（边际+平均+利润）", expanded=False):
+        st.markdown("**输入固定成本、可变成本、产量，一键算出所有成本和利润指标**")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            fc = st.number_input("固定成本 FC（元）", value=10000.0, key="fc")
+        with col2:
+            vc = st.number_input("可变成本 VC（元）", value=20000.0, key="vc")
+        with col3:
+            q = st.number_input("产量 Q", value=1000.0, key="q")
+        col4, col5 = st.columns(2)
+        with col4:
+            price = st.number_input("价格 P（元/件）", value=50.0, key="price")
+        with col5:
+            hidden_cost = st.number_input("隐性成本（机会成本，元）", value=5000.0, key="hidden_cost")
+        if st.button("计算成本利润", key="calc_cost_profit"):
+            if q > 0:
+                tc = fc + vc
+                afc = fc / q
+                avc = vc / q
+                atc = tc / q
+                tr = price * q
+                accounting_profit = tr - tc
+                economic_profit = tr - tc - hidden_cost
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("总成本 TC", f"{tc:,.0f} 元")
+                    st.metric("平均固定成本 AFC", f"{afc:.2f} 元")
+                with col_b:
+                    st.metric("平均可变成本 AVC", f"{avc:.2f} 元")
+                    st.metric("平均总成本 ATC", f"{atc:.2f} 元")
+                with col_c:
+                    st.metric("总收益 TR", f"{tr:,.0f} 元")
+                    st.metric("会计利润", f"{accounting_profit:,.0f} 元")
+                if economic_profit > 0:
+                    st.success(f"✅ 经济利润 = {economic_profit:,.0f} 元（>0，值得做）")
+                elif economic_profit == 0:
+                    st.info(f"🟡 经济利润 = 0，属于正常利润，可做可不做")
+                else:
+                    st.error(f"🔴 经济利润 = {economic_profit:,.0f} 元（<0，不如去做别的）")
+            else:
+                st.error("产量不能为0")
+
+    with st.expander("🔢 边际成本/边际收益（利润最大化判断）", expanded=False):
+        st.markdown("**利润最大化原则：边际收益 MR = 边际成本 MC**")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            tc1 = st.number_input("原总成本", value=30000.0, key="tc1")
+        with col2:
+            tc2 = st.number_input("新总成本", value=30500.0, key="tc2")
+        with col3:
+            tr1 = st.number_input("原总收益", value=50000.0, key="tr1")
+        with col4:
+            tr2 = st.number_input("新总收益", value=50600.0, key="tr2")
+        if st.button("计算边际", key="calc_margin"):
+            mc = tc2 - tc1
+            mr = tr2 - tr1
+            st.metric("边际成本 MC", f"{mc:,.0f} 元")
+            st.metric("边际收益 MR", f"{mr:,.0f} 元")
+            if mr > mc:
+                st.success(f"✅ MR > MC（{mr:.0f} > {mc:.0f}），继续扩大生产")
+            elif mr == mc:
+                st.info(f"🎯 MR = MC，利润最大化，此时是最优产量")
+            else:
+                st.warning(f"🟡 MR < MC（{mr:.0f} < {mc:.0f}），应该减少生产")
+
+    st.subheader("📈 七、综合景气与分配")
+
+    with st.expander("🔢 克强指数（看实体经济景气）", expanded=False):
+        st.markdown("**公式**：工业用电量增速×40% + 铁路货运量增速×25% + 银行中长期贷款增速×35%")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            elec = st.number_input("工业用电量增速（%）", value=6.0, key="elec")
+        with col2:
+            rail = st.number_input("铁路货运量增速（%）", value=4.0, key="rail")
+        with col3:
+            loan = st.number_input("中长期贷款增速（%）", value=11.0, key="loan")
+        if st.button("计算克强指数", key="calc_keqiang"):
+            index = elec * 0.4 + rail * 0.25 + loan * 0.35
+            st.metric("克强指数", f"{index:.2f}%")
+            if index >= 5:
+                st.success(f"✅ 经济回暖（≥5%）")
+            elif index >= 0:
+                st.warning(f"🟡 经济偏弱（0~5%）")
+            else:
+                st.error(f"🔴 经济走弱（<0）")
+
+    with st.expander("🔢 恩格尔系数（看生活富裕程度）", expanded=False):
+        st.markdown("**公式**：食品支出 ÷ 总消费支出 × 100%")
+        col1, col2 = st.columns(2)
+        with col1:
+            food_spend = st.number_input("食品支出（元/月）", value=2000.0, key="food_spend")
+        with col2:
+            total_spend = st.number_input("总消费支出（元/月）", value=6000.0, key="total_spend")
+        if st.button("计算恩格尔系数", key="calc_engel"):
+            if total_spend > 0:
+                engel = food_spend / total_spend * 100
+                st.metric("恩格尔系数", f"{engel:.2f}%")
+                if engel > 59:
+                    st.error(f"🔴 贫困（>59%）")
+                elif engel > 50:
+                    st.warning(f"🟡 温饱（50%~59%）")
+                elif engel > 40:
+                    st.info(f"🟢 小康（40%~50%）")
+                elif engel > 30:
+                    st.success(f"✅ 富裕（30%~40%）")
+                else:
+                    st.success(f"🌟 最富裕（<30%）")
+            else:
+                st.error("总消费不能为0")
+
+    with st.expander("🔢 基尼系数判断（看贫富差距）", expanded=False):
+        st.markdown("**输入基尼系数（0~1），自动判断收入分配状态**")
+        gini = st.number_input("基尼系数", value=0.45, step=0.01, min_value=0.0, max_value=1.0, key="gini")
+        if st.button("判断基尼系数", key="calc_gini"):
+            if gini < 0.2:
+                st.success(f"🌟 高度平均（<0.2）")
+            elif gini < 0.3:
+                st.success(f"✅ 比较平均（0.2~0.3）")
+            elif gini < 0.4:
+                st.info(f"🟢 相对合理（0.3~0.4）")
+            elif gini == 0.4:
+                st.warning(f"⚠️ 处于警戒线（=0.4）")
+            else:
+                st.error(f"🔴 差距偏大（>0.4），需要政策调节")
+
+    st.markdown("---")
+    st.caption("💡 提示：本计算器基于经济学标准公式，结果仅供参考。实际决策请结合具体数据。")
