@@ -6,7 +6,8 @@ from datetime import datetime
 from macro_data import fetch_all_macro, get_val
 
 # ==================== 你的钥匙 ====================
-PUSHPLUS_TOKEN = "bb4a25de496548489a1cd2b33a008ceb"
+import os
+PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN")
 # ==================================================
 
 def send_to_wechat(title, content):
