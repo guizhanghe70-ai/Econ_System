@@ -1,12 +1,9 @@
-name: 每日经济数据更新
+name: 每日宏观数据早报
+
 on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
-
-# 🛑 最关键的一步：强制声明工作流拥有修改仓库代码的写入权限
-permissions:
-  contents: write
 
 jobs:
   build:
@@ -14,25 +11,16 @@ jobs:
     steps:
       - name: 拉取代码
         uses: actions/checkout@v4
-        with:
-          # 显式告诉云端机器人使用自己的授权令牌去拉取代码
-          token: ${{ secrets.GITHUB_TOKEN }}
-        
+
       - name: 安装 Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          
-      - name: 安装依赖包
-        run: pip install akshare pandas matplotlib
-        
-      - name: 运行脚本
-        run: |
-          python get_cpi.py
-          python plot_cpi.py
-          
-      # v5 版本会自动使用上面的 token，不需要额外加 token 参数
-      - name: 提交更新到仓库
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "🤖 每日自动化更新经济数据图表"
+
+      - name: 安装依赖
+        run: pip install requests pandas akshare
+
+      - name: 运行推送脚本
+        env:
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+        run: python push_bot.py
