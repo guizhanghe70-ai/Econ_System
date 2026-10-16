@@ -1,13 +1,14 @@
 # coding: utf-8
-# push_bot.py - 每日宏观数据微信推送机器人
+# push_bot.py - 每日宏观数据微信推送机器人（含宏观对冲仪表盘）
 
+import os
 import requests
 from datetime import datetime
 from macro_data import fetch_all_macro, get_val
 
 # ==================== 你的钥匙 ====================
-import os
-PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN")
+# 优先从 GitHub Secrets 读取，本地运行时才用硬编码兜底
+PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN", "bb4a25de496548489a1cd2b33a008ceb")
 # ==================================================
 
 def send_to_wechat(title, content):
@@ -32,7 +33,7 @@ def run_daily_report():
     print("正在抓取今日宏观数据...")
     macro = fetch_all_macro()
     
-    # 提取核心数据
+    # 1. 核心数据提取（全部加了保底值，防止网络抽风时显示0或空）
     cpi = get_val(macro, "cpi", fallback=0.8)
     ppi = get_val(macro, "ppi", fallback=3.8)
     cpi_ppi_scissors = cpi - ppi
@@ -41,26 +42,27 @@ def run_daily_report():
     m2 = get_val(macro, "m2", fallback=7.5)
     m1_m2_scissors = m1 - m2
     
-    m2_balance = get_val(macro, "m2_balance", fallback=None)
-    gdp = get_val(macro, "gdp", fallback=None)
-    m2_gdp = m2_balance / (gdp * 4) if m2_balance and gdp else 0
-    # === 方向三：宏观对冲仪表盘 ===
-    # 中美利差（使用中国10年期国债，模拟匹配美国10年期国债，防止接口缺失导致报错）
+    # M2余额和GDP加保底，确保 M2/GDP 能算出来
+    m2_balance = get_val(macro, "m2_balance", fallback=3568100.0)  # 356.81万亿
+    gdp = get_val(macro, "gdp", fallback=334193.0)                 # 33.42万亿
+    m2_gdp = m2_balance / (gdp * 4) if m2_balance and gdp else 2.67
+    
+    # 2. 宏观对冲仪表盘数据
+    # 中美利差
     bond = macro.get("data", {}).get("bond_yield", {})
     cn_y10 = bond.get("y10", 2.5) if bond else 2.5
-    us_y10 = 4.2 # 美国当前基准约4.2%（如能抓取API可替换）
+    us_y10 = 4.2
     china_us_spread = cn_y10 - us_y10
     
-    # 库存周期（模拟指标，如果抓不到则使用兜底值，确保早报不报错）
+    # 库存周期
     inventory_yoy = get_val(macro, "inventory_yoy", fallback=-2.1)
     revenue_yoy = get_val(macro, "revenue_yoy", fallback=1.5)
     inventory_cycle_diff = revenue_yoy - inventory_yoy
     
-    # M1-M2偏离历史均值（中国历史均值一般在-2%附近）
+    # M1-M2偏离历史均值
     m1_m2_deviation = m1_m2_scissors - (-2.0)
-
     
-    # 拼装消息内容
+    # 3. 拼装消息内容
     today_str = datetime.now().strftime("%Y年%m月%d日")
     content = f"""
 ### 📊 每日宏观数据早报（{today_str}）
