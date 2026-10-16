@@ -598,4 +598,60 @@ with col_tax4:
     exp_yoy = exp_data.get('yoy', 2.8)
     st.metric("财政支出同比", f"{exp_yoy:+.1f}%", "逆周期调节")
 st.caption("💡 税收同比看经济冷暖，支出同比看政策力度。两者结合看财政政策取向。")
+python -c "import pathlib; p=pathlib.Path('app.py'); s=p.read_text(encoding='utf-8'); diag='''
 
+st.markdown(\"---\")
+st.subheader(\"🩺 经济诊断与对策建议（本地规则引擎）\")
+
+# 诊断逻辑
+diagnoses = []
+suggestions = []
+feasibility = []
+
+# 1. 流动性陷阱判断
+if gdp_val and m2_balance_val and gdp_val > 0:
+    m2_gdp = m2_balance_val / (gdp_val * 4)
+    if m2_gdp > 2.5:
+        diagnoses.append(\"🔴 **流动性陷阱特征明显**：M2/GDP = \" + f\"{m2_gdp:.2f}\" + \" 倍，货币严重超发，但资金未有效流入实体\")
+        suggestions.append(\"💊 **对策**：货币政策边际效用递减，需财政发力。建议增发国债、扩大政府投资、加快重大项目落地\")
+        feasibility.append(\"⚖️ **可行性**：当前赤字率约3%，距离国际警戒线3%仍有空间；但需警惕地方债务压力\")
+if m1_val is not None and m2_val is not None:
+    scissors = m1_val - m2_val
+    if scissors < 0:
+        diagnoses.append(\"🟡 **资金活化不足**：M1/M2剪刀差 = \" + f\"{scissors:+.2f}%\" + \"，钱被存成定期，不敢消费和投资\")
+        suggestions.append(\"💊 **对策**：刺激消费、提高居民收入预期、降低存款利率\")
+        feasibility.append(\"⚖️ **可行性**：降息受中美利差制约，空间有限；消费刺激需财政配合\")
+
+# 2. 物价结构判断
+if True:
+    cpi_v = 0.8; ppi_v = 3.8
+    if cpi_v < 1 and ppi_v > 0:
+        diagnoses.append(\"🟡 **下游通缩、上游挤压**：CPI低、PPI高，中游企业利润被两头挤压\")
+        suggestions.append(\"💊 **对策**：刺激终端消费、减税降费、支持中游制造业\")
+        feasibility.append(\"⚖️ **可行性**：减税降费需财政承受能力；消费刺激需居民收入支撑\")
+
+# 3. 外部压力判断
+if True:
+    spread_val = -1.7
+    if spread_val < 0:
+        diagnoses.append(\"🔴 **中美利差倒挂**：外资流出压力大，人民币汇率承压\")
+        suggestions.append(\"💊 **对策**：稳汇率预期、加强资本流动管理、提升人民币资产吸引力\")
+        feasibility.append(\"⚖️ **可行性**：降息空间受制约；需平衡稳增长与稳汇率\")
+
+# 输出
+for d in diagnoses:
+    st.warning(d)
+st.markdown(\"#### 📋 对策建议\")
+for s in suggestions:
+    st.info(s)
+st.markdown(\"#### ⚖️ 可行性分析\")
+for f in feasibility:
+    st.caption(f)
+
+st.caption(\"💡 提示：本诊断基于本地规则引擎，仅供参考。实际决策请结合更多信息和专业判断。\")
+'''
+if '经济诊断与对策建议' not in s:
+    p.write_text(s + diag, encoding='utf-8')
+    print('✅ 经济诊断板块已成功追加！')
+else:
+    print('📌 诊断板块已存在，无需重复添加。')"
