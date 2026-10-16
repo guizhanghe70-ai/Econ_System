@@ -1,5 +1,5 @@
 # coding: utf-8
-# push_bot.py - 每日宏观数据微信推送机器人（含宏观对冲仪表盘）
+# push_bot.py - 每日宏观数据微信推送机器人（含经济诊断）
 
 import os
 import requests
@@ -32,37 +32,48 @@ def send_to_wechat(title, content):
 def run_daily_report():
     print("正在抓取今日宏观数据...")
     macro = fetch_all_macro()
-    
-    # 1. 核心数据提取（全部加了保底值，防止网络抽风时显示0或空）
+
+    # 1. 核心数据提取（全部加了保底值）
     cpi = get_val(macro, "cpi", fallback=0.8)
     ppi = get_val(macro, "ppi", fallback=3.8)
     cpi_ppi_scissors = cpi - ppi
-    
+
     m1 = get_val(macro, "m1", fallback=4.1)
     m2 = get_val(macro, "m2", fallback=7.5)
     m1_m2_scissors = m1 - m2
-    
-    # M2余额和GDP加保底，确保 M2/GDP 能算出来
-    m2_balance = get_val(macro, "m2_balance", fallback=3568100.0)  # 356.81万亿
-    gdp = get_val(macro, "gdp", fallback=334193.0)                 # 33.42万亿
+
+    m2_balance = get_val(macro, "m2_balance", fallback=3568100.0)
+    gdp = get_val(macro, "gdp", fallback=334193.0)
     m2_gdp = m2_balance / (gdp * 4) if m2_balance and gdp else 2.67
-    
+
     # 2. 宏观对冲仪表盘数据
-    # 中美利差
     bond = macro.get("data", {}).get("bond_yield", {})
     cn_y10 = bond.get("y10", 2.5) if bond else 2.5
     us_y10 = 4.2
     china_us_spread = cn_y10 - us_y10
-    
-    # 库存周期
+
     inventory_yoy = get_val(macro, "inventory_yoy", fallback=-2.1)
     revenue_yoy = get_val(macro, "revenue_yoy", fallback=1.5)
     inventory_cycle_diff = revenue_yoy - inventory_yoy
-    
-    # M1-M2偏离历史均值
+
     m1_m2_deviation = m1_m2_scissors - (-2.0)
-    
-    # 3. 拼装消息内容
+
+    # 3. 经济诊断与对策（本地规则引擎）
+    diag_lines = []
+    if m2_gdp > 2.5:
+        diag_lines.append("🔴 **流动性陷阱**：货币超发但未流入实体，需财政发力")
+    if m1_m2_scissors < 0:
+        diag_lines.append("🟡 **资金活化不足**：钱被存成定期，需刺激消费")
+    if cpi < 1 and ppi > 0:
+        diag_lines.append("🟡 **下游通缩、上游挤压**：中游利润被两头挤，需减税降费")
+    if china_us_spread < 0:
+        diag_lines.append("🔴 **中美利差倒挂**：外资流出压力大，降息空间受限")
+    if inventory_cycle_diff > 0:
+        diag_lines.append("🟢 **主动补库**：经济复苏初期，关注大宗商品")
+    if not diag_lines:
+        diag_lines.append("🟢 当前宏观指标未见明显异常")
+
+    # 4. 拼装消息内容
     today_str = datetime.now().strftime("%Y年%m月%d日")
     content = f"""
 ### 📊 每日宏观数据早报（{today_str}）
@@ -83,8 +94,11 @@ def run_daily_report():
 *   **库存周期(营收-库存)**：{inventory_cycle_diff:+.2f}% （{"主动补库，经济复苏" if inventory_cycle_diff > 0 else "被动去库，需求疲软"}）
 *   **M1-M2偏离均值**：{m1_m2_deviation:+.2f}% （{"资金活化度高于历史均值" if m1_m2_deviation > 0 else "资金沉淀低于历史均值"}）
 
+**四、经济诊断与对策**
+{chr(10).join(diag_lines)}
+
 ---
-💡 *提示：数据由 AkShare 自动抓取，缓存 24 小时。*
+💡 *提示：数据由 AkShare 自动抓取，诊断仅供参考。*
 """
     send_to_wechat("📈 今日宏观数据早报", content)
 
